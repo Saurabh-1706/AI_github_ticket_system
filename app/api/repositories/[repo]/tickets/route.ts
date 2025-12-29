@@ -1,14 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
 import { Ticket } from "@/models/Ticket";
 
 export async function GET(
-  req: Request,
-  { params }: { params: { repo: string } }
+  req: NextRequest,
+  context: { params: Promise<{ repo: string }> }
 ) {
   await connectDB();
 
-  const repoFullName = decodeURIComponent(params.repo);
+  const { repo } = await context.params;
+  const repoFullName = decodeURIComponent(repo);
 
   const tickets = await Ticket.find({
     repository: repoFullName,
@@ -16,4 +17,3 @@ export async function GET(
 
   return NextResponse.json({ tickets });
 }
-
