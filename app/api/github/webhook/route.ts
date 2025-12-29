@@ -4,9 +4,11 @@ import { connectDB } from "@/lib/db";
 import { Repository } from "@/models/Repository";
 import { Ticket } from "@/models/Ticket";
 
+export const dynamic = "force-dynamic";
+
 const SECRET = process.env.GITHUB_WEBHOOK_SECRET as string;
 
-// ---- Types (no `any`) ----
+// ---- Types ----
 type GitHubLabel = { name: string };
 
 type GitHubIssue = {
@@ -42,43 +44,42 @@ export async function POST(req: NextRequest) {
   console.log("🔔 Webhook hit");
 
   const rawBody = await req.text();
-  console.log("Raw body received");
-
   const payload = JSON.parse(rawBody);
 
-  console.log("Event action:", payload.action);
-
   await connectDB();
-  console.log("✅ DB connected");
 
-  const issue = payload.issue;
-  const repo = payload.repository;
+  const issue: GitHubIssue = payload.issue;
+  const repo: GitHubRepo = payload.repository;
 
-  console.log("Repo:", repo.full_name);
-  console.log("Issue:", issue.id);
+  // ---- Upsert repository (avoid duplicates) ----
+  await Repository.findOneAndUpdate(
+    { githubRepoId: repo.id },
+    {
+      githubRepoId: repo.id,
+      name: repo.name,
+      fullName: repo.full_name,
+      owner: repo.owner.login,
+      description: repo.description,
+    },
+    { upsert: true, new: true }
+  );
 
-  await Repository.create({
-    githubRepoId: repo.id,
-    name: repo.name,
-    fullName: repo.full_name,
-    owner: repo.owner.login,
-    description: repo.description,
-  });
+  // ---- Prevent duplicate tickets ----
+  await Ticket.findOneAndUpdate(
+    { githubIssueId: issue.id.toString() },
+    {
+      githubIssueId: issue.id.toString(),
+      issueNumber: issue.number,
+      repository: repo.full_name,
+      title: issue.title,
+      description: issue.body,
+      author: issue.user.login,
+      issueUrl: issue.html_url,
+      labels: issue.labels.map(l => l.name),
+      status: "open",
+    },
+    { upsert: true, new: true }
+  );
 
-  console.log("✅ Repository inserted");
-
-  await Ticket.create({
-    githubIssueId: issue.id.toString(),
-    issueNumber: issue.number,
-    repository: repo.full_name,
-    title: issue.title,
-    description: issue.body,
-    author: issue.user.login,
-    issueUrl: issue.html_url,
-    labels: [],
-  });
-
-  console.log("✅ Ticket inserted");
-
-  return NextResponse.json({ message: "Inserted (debug mode)" });
+  return NextResponse.json({ message: "Webhook processed" });
 }
