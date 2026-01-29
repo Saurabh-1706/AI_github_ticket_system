@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 "use client";
 
 import IssueCard from "./IssueCard";
@@ -30,6 +31,15 @@ export default function IssueList({
           onSelect={onSelect}
           onSelectSimilar={onSelectSimilar}
         />
+=======
+import IssueCard from "./IssueCard";
+
+export default function IssueList({ issues }: any) {
+  return (
+    <div className="mt-6 grid gap-4">
+      {issues.map((issue: any) => (
+        <IssueCard key={issue.id} issue={issue} />
+>>>>>>> 9cd19b606496d8e72f9b6fc53e64231b02bfe822
       ))}
     </div>
   );

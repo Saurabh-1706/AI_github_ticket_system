@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 const API_BASE = "http://localhost:8000/api/github";
 const ANALYSIS_API = "http://localhost:8000/api/analysis";
 
@@ -61,5 +62,21 @@ export async function analyzeIssue(issue: any) {
     throw new Error("AI analysis failed");
   }
 
+=======
+const GITHUB_API = "https://api.github.com";
+
+export async function fetchRepo(owner: string, repo: string) {
+  const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`);
+  if (!res.ok) throw new Error("Repo not found");
+  return res.json();
+}
+
+export async function fetchIssues(owner: string, repo: string) {
+  const res = await fetch(
+    `${GITHUB_API}/repos/${owner}/${repo}/issues?state=all&per_page=30`
+  );
+
+  if (!res.ok) throw new Error("Issues not found");
+>>>>>>> 9cd19b606496d8e72f9b6fc53e64231b02bfe822
   return res.json();
 }

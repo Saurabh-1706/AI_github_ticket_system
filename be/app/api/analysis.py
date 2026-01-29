@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+<<<<<<< HEAD
 from app.vector.embeddings import EmbeddingService
 from app.vector.chroma_client import chroma
 import numpy as np
@@ -39,3 +40,12 @@ def analyze_issue(issue: dict):
     return {
         "similar_issues": similar[:5]
     }
+=======
+from app.core.issue_analyzer import analyze
+
+router = APIRouter()
+
+@router.post("/")
+def analyze_issue(issue: dict):
+    return analyze(issue["title"], issue.get("body",""))
+>>>>>>> 9cd19b606496d8e72f9b6fc53e64231b02bfe822

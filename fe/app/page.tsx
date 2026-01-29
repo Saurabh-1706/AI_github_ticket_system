@@ -2,6 +2,7 @@ import RepoInput from "./components/RepoInput";
 
 export default function Home() {
   return (
+<<<<<<< HEAD
     <main className="min-h-screen bg-zinc-50 dark:bg-black flex items-center justify-center px-6">
       <div className="w-full max-w-3xl">
         {/* Card */}
@@ -29,6 +30,18 @@ export default function Home() {
           </p>
         </div>
       </div>
+=======
+    <main className="max-w-3xl mx-auto mt-20">
+      <h1 className="text-3xl font-bold mb-6">
+        Git IntelliSolve
+      </h1>
+
+      <p className="mb-4 text-gray-600">
+        Paste a GitHub repository URL to analyze issues
+      </p>
+
+      <RepoInput />
+>>>>>>> 9cd19b606496d8e72f9b6fc53e64231b02bfe822
     </main>
   );
 }
