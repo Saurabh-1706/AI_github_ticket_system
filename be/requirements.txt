@@ -2,6 +2,13 @@ fastapi
 uvicorn
 httpx
 python-dotenv
+<<<<<<< HEAD
+chromadb==0.4.22
+sentence-transformers==2.2.2
+numpy
+
+=======
 sentence-transformers
 chromadb
 numpy
+>>>>>>> 9cd19b606496d8e72f9b6fc53e64231b02bfe822
