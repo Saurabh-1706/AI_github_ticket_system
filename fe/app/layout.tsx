@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-import "./globals.css";
-=======
 import "../styles/globals.css";
->>>>>>> 9cd19b606496d8e72f9b6fc53e64231b02bfe822
 
 export default function RootLayout({
   children,
@@ -11,10 +7,6 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-<<<<<<< HEAD
-      <body className="bg-zinc-50 text-zinc-900">
-        {children}
-=======
       <body>
         <div className="min-h-screen flex">
           {/* Sidebar */}
@@ -39,7 +31,6 @@ export default function RootLayout({
           {/* Main */}
           <main className="flex-1">{children}</main>
         </div>
->>>>>>> 9cd19b606496d8e72f9b6fc53e64231b02bfe822
       </body>
     </html>
   );
