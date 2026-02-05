@@ -7,32 +7,36 @@ export default function RepoInput() {
   const [url, setUrl] = useState("");
   const router = useRouter();
 
-  function handleSubmit() {
-    try {
-      const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
-      if (!match) throw new Error();
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
 
-      const [, owner, repo] = match;
+    try {
+      const parsed = new URL(url);
+      const [, owner, repo] = parsed.pathname.split("/");
+
+      if (!owner || !repo) throw new Error();
+
       router.push(`/repository?owner=${owner}&repo=${repo}`);
     } catch {
-      alert("Invalid GitHub repo URL");
+      alert("Enter a valid GitHub repository URL");
     }
   }
 
   return (
-    <div className="flex gap-2">
+    <form onSubmit={submit} className="space-y-4">
       <input
-        className="border p-2 rounded w-full"
-        placeholder="https://github.com/facebook/react"
         value={url}
         onChange={(e) => setUrl(e.target.value)}
+        placeholder="https://github.com/facebook/react"
+        className="w-full rounded-lg border px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black"
       />
+
       <button
-        onClick={handleSubmit}
-        className="bg-black text-white px-4 rounded"
+        type="submit"
+        className="w-full rounded-lg bg-black px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
       >
-        Load
+        Analyze Repository →
       </button>
-    </div>
+    </form>
   );
 }

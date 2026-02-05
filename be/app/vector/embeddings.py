@@ -1,6 +1,33 @@
+import os
 from sentence_transformers import SentenceTransformer
 
-_model = SentenceTransformer("all-MiniLM-L6-v2")
+class EmbeddingService:
+    def __init__(self):
+        self.model = None
 
-def embed(text: str):
-    return _model.encode(text).tolist()
+    def _load_model(self):
+        if self.model is None:
+            BASE_DIR = os.path.dirname(
+                os.path.dirname(os.path.dirname(__file__))
+            )
+            MODEL_PATH = os.path.join(
+                BASE_DIR, "models", "all-MiniLM-L6-v2"
+            )
+
+            print("✅ Loading SentenceTransformer from:", MODEL_PATH)
+
+            self.model = SentenceTransformer(
+                MODEL_PATH,
+                local_files_only=True
+            )
+
+        return self.model
+
+    def embed_issue(self, title: str, body: str):
+        text = f"{title}\n{body}"
+        model = self._load_model()
+        return model.encode(text).tolist()
+
+    def embed_text(self, text: str):
+        model = self._load_model()
+        return model.encode(text).tolist()

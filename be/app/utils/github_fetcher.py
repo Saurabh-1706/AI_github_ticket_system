@@ -1,34 +1,60 @@
-import requests
-from typing import Dict, List
 import os
+import requests
+from functools import lru_cache
 
-GITHUB_API = "https://api.github.com"
+@lru_cache(maxsize=128)
+def get_repo(self, owner: str, repo: str):
+    ...
 
+@lru_cache(maxsize=128)
+def get_issues(self, owner: str, repo: str, max_issues: int = 50):
+    ...
 
 class GitHubFetcher:
     def __init__(self):
-        self.token = os.getenv("GITHUB_TOKEN")
-        self.headers = {
-            "Accept": "application/vnd.github+json"
-        }
-        if self.token:
-            self.headers["Authorization"] = f"Bearer {self.token}"
+        token = os.getenv("GITHUB_TOKEN")
+        if not token:
+            raise RuntimeError("❌ GITHUB_TOKEN is not set")
 
-    def get_repo(self, owner: str, repo: str) -> Dict:
-        url = f"{GITHUB_API}/repos/{owner}/{repo}"
+        self.base_url = "https://api.github.com"
+        self.headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        }
+
+
+    def get_repo(self, owner: str, repo: str):
+        url = f"{self.base_url}/repos/{owner}/{repo}"
         res = requests.get(url, headers=self.headers)
         res.raise_for_status()
         return res.json()
 
-    def get_issues(self, owner: str, repo: str) -> List[Dict]:
-        url = f"{GITHUB_API}/repos/{owner}/{repo}/issues"
-        params = {
-            "state": "all",
-            "per_page": 100
-        }
-        res = requests.get(url, headers=self.headers, params=params)
-        res.raise_for_status()
-        return res.json()
+    def get_issues(self, owner: str, repo: str, max_issues: int = 50):
+        issues = []
+        page = 1
+
+        while len(issues) < max_issues:
+            res = requests.get(
+                f"{self.base_url}/repos/{owner}/{repo}/issues",
+                headers=self.headers,
+                params={
+                    "state": "all",
+                    "per_page": 50,
+                    "page": page,
+                },
+            )
+
+            res.raise_for_status()
+            data = res.json()
+
+            if not data:
+                break
+
+            issues.extend(data)
+            page += 1
+
+        return issues[:max_issues]
+
 
 
 github_fetcher = GitHubFetcher()

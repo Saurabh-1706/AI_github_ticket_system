@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { fetchRepo, fetchIssues } from "../services/github";
 import RepoCard from "../components/RepoCard";
 import IssueList from "../components/IssueList";
+import IssueDetail from "../components/IssueDetail";
 
 export default function RepositoryPage() {
   const params = useSearchParams();
@@ -14,78 +15,128 @@ export default function RepositoryPage() {
   const [repoData, setRepoData] = useState<any>(null);
   const [issues, setIssues] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedIssue, setSelectedIssue] = useState<any>(null);
 
   useEffect(() => {
     if (!owner || !repo) return;
 
-    Promise.all([fetchRepo(owner, repo), fetchIssues(owner, repo)])
-      .then(([repoRes, issuesRes]) => {
+    const loadData = async () => {
+      try {
+        const [repoRes, issuesRes] = await Promise.all([
+          fetchRepo(owner, repo),
+          fetchIssues(owner, repo),
+        ]);
+
         setRepoData(repoRes);
+        setIssues(issuesRes);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-        // Filter out pull requests
-        const onlyIssues = issuesRes
-          .filter((i: any) => !i.pull_request)
-          .map((issue: any, idx: number) => {
-            const similarity = Math.random(); // mock cosine similarity
-
-            return {
-              ...issue,
-
-              // AI analysis (already working)
-              ai_analysis: {
-                criticality: ["critical", "high", "medium", "low"][
-                  Math.floor(Math.random() * 4)
-                ],
-                type: ["bug", "feature", "documentation", "performance"][
-                  Math.floor(Math.random() * 4)
-                ],
-                confidence: Number(similarity.toFixed(2)),
-              },
-
-              // 🔁 Duplicate detection (Phase 3)
-              duplicate_info: {
-                classification:
-                  similarity >= 0.85
-                    ? "duplicate"
-                    : similarity >= 0.7
-                      ? "related"
-                      : "new",
-
-                similarity,
-
-                reuse_type:
-                  similarity >= 0.9
-                    ? "direct"
-                    : similarity >= 0.8
-                      ? "adapt"
-                      : similarity >= 0.7
-                        ? "reference"
-                        : "minimal",
-
-                similar_issue:
-                  similarity >= 0.7
-                    ? {
-                        title: `Similar issue #${idx + 101}`,
-                      }
-                    : null,
-              },
-            };
-          });
-
-        setIssues(onlyIssues);
-      })
-      .finally(() => setLoading(false));
+    loadData();
   }, [owner, repo]);
 
-  if (loading) return <p>Loading...</p>;
+  useEffect(() => {
+    console.log("selectedIssue =", selectedIssue);
+  }, [selectedIssue]);
+
+
+  const handleSelectSimilar = (similar: any) => {
+    const match = issues.find((i) => i.number === similar.number);
+    if (match) setSelectedIssue(match);
+  };
+
+  if (loading) {
+    return <div className="p-10 text-center">Loading…</div>;
+  }
+
+  const handleSelectIssue = async (issue: any) => {
+    setSelectedIssue(issue); // open panel immediately
+  
+    try {
+      const analysis = await fetch(
+        "http://localhost:8000/api/analysis/analyze",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(issue),
+        }
+      ).then((r) => r.json());
+  
+      setSelectedIssue({
+        ...issue,
+        ai_analysis: {
+          type: analysis.type ?? "unknown",
+          criticality: analysis.criticality ?? "unknown",
+          confidence: analysis.confidence ?? 0,
+        },
+        duplicate_info: analysis.similar_issues?.[0] ?? null,
+        similar_issues: analysis.similar_issues ?? [],
+      });
+    } catch (e) {
+      console.error("Analysis failed", e);
+    }
+  };
+  
 
   return (
-    <main className="max-w-6xl mx-auto px-4 py-10 space-y-8">
-      <RepoCard repo={repoData} />
+    <div className="min-h-screen bg-zinc-50 dark:bg-black">
+      <main className="mx-auto max-w-7xl px-4 py-6">
+        <div className="relative flex h-[calc(100vh-64px)] overflow-hidden">
+          {/* LEFT: ISSUE LIST */}
+          <div
+            className={`
+              transition-all duration-300
+              ${selectedIssue ? "hidden md:block md:w-1/2 lg:w-3/5" : "w-full"}
+              overflow-y-auto no-scrollbar pr-2
+            `}
+          >
 
-      <h2 className="text-xl font-bold mt-10">Issues ({issues.length})</h2>
+            <RepoCard repo={repoData} />
+            <IssueList
+              issues={issues}
+              onSelect={handleSelectIssue}
+              onSelectSimilar={handleSelectSimilar}
+            />
+          </div>
 
-      <IssueList issues={issues} />
-    </main>
+          {/* RIGHT: ISSUE DETAIL PANEL */}
+          <div
+            className={`
+              fixed inset-y-0 right-0 z-40
+              w-full md:w-1/2 lg:w-2/5
+              bg-white dark:bg-zinc-900
+              border-l border-zinc-200 dark:border-zinc-800
+              transform transition-transform duration-300 ease-in-out
+              ${selectedIssue ? "translate-x-0" : "translate-x-full"}
+            `}
+          >
+            {selectedIssue && (
+              <IssueDetail
+                issue={selectedIssue}
+                onClose={() => setSelectedIssue(null)}
+                onSelectSimilar={handleSelectSimilar}
+              />
+            )}
+          </div>
+
+        </div>
+
+      </main>
+
+    </div>
+  );
+}
+
+/* ✅ MUST BE BELOW (same file) */
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs text-zinc-400">{label}</p>
+      <p className="font-medium">{value}</p>
+    </div>
   );
 }

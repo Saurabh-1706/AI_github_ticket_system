@@ -1,28 +1,21 @@
-interface RepoCardProps {
-  repo: any;
-}
-
 export default function RepoCard({ repo }: any) {
   if (!repo) return null;
-
+  
   return (
-    <div className="bg-white rounded-xl shadow-sm border p-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-semibold">
-            {repo.full_name}
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            {repo.description}
-          </p>
-        </div>
+    <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <h2 className="text-xl font-semibold">
+        {repo.full_name}
+      </h2>
 
-        <div className="flex gap-4 text-sm text-slate-600">
-          ⭐ {repo.stargazers_count}
-          🍴 {repo.forks_count}
-        </div>
+      <p className="mt-2 text-sm text-zinc-600">
+        {repo.description}
+      </p>
+
+      <div className="mt-4 flex gap-6 text-sm text-zinc-500">
+        <span>⭐ {repo.stars}</span>
+        <span>🍴 {repo.forks}</span>
+        <span>🐞 {repo.open_issues}</span>
       </div>
     </div>
   );
 }
-

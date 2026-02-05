@@ -1,0 +1,136 @@
+"use client";
+
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
+interface IssueDetailProps {
+  issue: any;
+  onClose: () => void;
+  onSelectSimilar: (issue: any) => void;
+}
+
+export default function IssueDetail({
+  issue,
+  onClose,
+  onSelectSimilar,
+}: IssueDetailProps) {
+  // 🔒 Hard guard — prevents invisible render
+  if (!issue || !issue.number || !issue.title) {
+    return (
+      <div className="p-6 text-red-500">
+        Issue data missing
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
+      {/* ================= HEADER ================= */}
+      <div className="sticky top-0 z-20 border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="flex items-start gap-3">
+          <span className="shrink-0 rounded-md bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+            #{issue.number}
+          </span>
+
+          <h2 className="flex-1 text-base font-semibold leading-snug break-words">
+            {issue.title}
+          </h2>
+
+          <button
+            onClick={onClose}
+            className="rounded-md px-2 py-1 text-sm text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+
+      {/* ================= SCROLLABLE CONTENT ================= */}
+      <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-6">
+      {/* Issue Body */}
+        <div className="prose prose-zinc dark:prose-invert max-w-none break-words leading-relaxed">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {issue.body || "No description provided."}
+          </ReactMarkdown>
+        </div>
+
+        {/* Labels */}
+        {issue.labels?.length > 0 && (
+          <div className="mt-6 flex flex-wrap gap-2">
+            {issue.labels.map((label: string) => (
+              <span
+                key={label}
+                className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* AI Analysis */}
+        {issue.ai_analysis && (
+          <div className="mt-8 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+            <h3 className="mb-3 text-sm font-semibold">
+              🤖 AI Analysis
+            </h3>
+
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <Info label="Type" value={issue.ai_analysis.type ?? "—"} />
+              <Info
+                label="Criticality"
+                value={issue.ai_analysis.criticality ?? "—"}
+              />
+              <Info
+                label="Confidence"
+                value={
+                  issue.ai_analysis.confidence
+                    ? `${Math.round(issue.ai_analysis.confidence * 100)}%`
+                    : "—"
+                }
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Similar Issues */}
+        {issue.similar_issues?.length > 0 && (
+          <div className="mt-8">
+            <h3 className="mb-3 text-sm font-semibold">
+              🔁 Similar Issues
+            </h3>
+
+            <ul className="space-y-2">
+              {issue.similar_issues.map((s: any) => (
+                <li
+                  key={s.id}
+                  onClick={() => onSelectSimilar(s)}
+                  className="cursor-pointer rounded-lg border border-zinc-200 p-3 text-sm hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800"
+                >
+                  #{s.number} {s.title}
+                  <span className="ml-2 text-zinc-500">
+                    ({Math.round(s.similarity * 100)}%)
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ================= INFO BLOCK ================= */
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-wide text-zinc-400">
+        {label}
+      </p>
+      <p className="mt-0.5 font-medium capitalize">
+        {value}
+      </p>
+    </div>
+  );
+}
