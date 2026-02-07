@@ -47,7 +47,7 @@ export default function IssueDetail({
 
       {/* ================= SCROLLABLE CONTENT ================= */}
       <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-6">
-      {/* Issue Body */}
+        {/* Issue Body */}
         <div className="prose prose-zinc dark:prose-invert max-w-none break-words leading-relaxed">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>
             {issue.body || "No description provided."}
@@ -93,6 +93,60 @@ export default function IssueDetail({
           </div>
         )}
 
+        {/* ================= AI SOLUTION ================= */}
+        {issue.solution && (
+          <div className="mt-8 rounded-xl border border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-800 dark:bg-indigo-900/20">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">
+                🛠️ Suggested Solution
+              </h3>
+
+              <SolutionConfidenceBadge confidence={issue.solution.confidence} />
+            </div>
+
+            {/* Summary */}
+            <p className="mb-4 text-sm text-indigo-900 dark:text-indigo-100">
+              {issue.solution.summary}
+            </p>
+
+            {/* Steps */}
+            {issue.solution.steps?.length > 0 && (
+              <ol className="mb-4 list-decimal space-y-1 pl-5 text-sm">
+                {issue.solution.steps.map((step: string, i: number) => (
+                  <li key={i}>{step}</li>
+                ))}
+              </ol>
+            )}
+
+            {/* Code Snippets */}
+            {issue.solution.code?.length > 0 && (
+              <div className="space-y-3">
+                {issue.solution.code.map((snippet: string, i: number) => (
+                  <pre
+                    key={i}
+                    className="overflow-x-auto rounded-lg bg-black p-3 text-xs text-green-400"
+                  >
+                    <code>{snippet}</code>
+                  </pre>
+                ))}
+              </div>
+            )}
+
+            {/* References */}
+            {issue.solution.references?.length > 0 && (
+              <div className="mt-4 text-xs text-indigo-700 dark:text-indigo-300">
+                <strong>References:</strong>
+                <ul className="list-disc pl-4">
+                  {issue.solution.references.map((ref: string, i: number) => (
+                    <li key={i}>{ref}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+
         {/* Similar Issues */}
         {issue.similar_issues?.length > 0 && (
           <div className="mt-8">
@@ -132,5 +186,28 @@ function Info({ label, value }: { label: string; value: string }) {
         {value}
       </p>
     </div>
+  );
+}
+
+
+function SolutionConfidenceBadge({ confidence }: { confidence: number }) {
+  if (confidence >= 0.8)
+    return <Badge text="High confidence" color="green" />;
+  if (confidence >= 0.6)
+    return <Badge text="Medium confidence" color="yellow" />;
+  return <Badge text="Low confidence" color="red" />;
+}
+
+function Badge({ text, color }: { text: string; color: string }) {
+  const map: any = {
+    green: "bg-green-100 text-green-700",
+    yellow: "bg-yellow-100 text-yellow-700",
+    red: "bg-red-100 text-red-700",
+  };
+
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${map[color]}`}>
+      {text}
+    </span>
   );
 }

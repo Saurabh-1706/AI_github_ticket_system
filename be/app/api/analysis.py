@@ -3,6 +3,8 @@ import numpy as np
 
 from app.vector.embeddings import EmbeddingService
 from app.vector.chroma_client import chroma  # ✅ shared instance
+from app.ai.solution_generator import generate_solution
+
 
 router = APIRouter(tags=["Analysis"])
 
@@ -108,6 +110,15 @@ def analyze_issue(issue: dict):
             else "low"
         )
 
+# ✅ Generate solution using similar issues + patterns
+        solution = generate_solution(
+            issue={
+                "title": title,
+                "body": body,
+            },
+            similar_issues=similar
+        )
+
         return {
             "type": issue_type,
             "criticality": criticality,
@@ -115,7 +126,9 @@ def analyze_issue(issue: dict):
             "similar_issues": sorted(
                 similar, key=lambda x: x["similarity"], reverse=True
             )[:5],
+            "solution": solution,   # ✅ HERE
         }
+
 
     except Exception as e:
         print("❌ ANALYSIS ERROR:", str(e))
