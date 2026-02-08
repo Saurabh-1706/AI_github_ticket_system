@@ -27,7 +27,7 @@ export default function IssueCard({
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
-        <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-100">
+        <h3 className="line-clamp-1 text-lg font-medium text-zinc-900 dark:text-zinc-100">
           #{issue?.number ?? "—"} {issue?.title ?? "Untitled issue"}
         </h3>
 

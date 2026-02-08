@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 import requests
 from app.utils.github_fetcher import github_fetcher
 from app.vector.embeddings import EmbeddingService
 from app.vector.chroma_client import chroma
+from app.ai.categorizer import categorizer
 import numpy as np
 from datetime import datetime
 from app.db.mongo import repos_collection
@@ -18,25 +19,32 @@ def cosine_similarity(a, b):
     b = np.array(b)
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
-def analyze_single_issue(issue):
+def analyze_single_issue(owner, repo, issue):
     try:
         title = issue.get("title", "")
         body = issue.get("body", "")
         issue_id = str(issue.get("id", ""))
         
-        embedding = embedder.embed_issue(title, body)
-        count = chroma.collection.count()
+        # Categorize the issue
+        category_info = categorizer.categorize(title, body)
+        primary_category = category_info["primary_category"]
         
-        if count <= 1:  # Only current issue exists
+        # Create embedding with category
+        embedding = embedder.embed_issue_with_category(title, body, primary_category)
+        # Get count for this specific repository
+        count = chroma.count(owner, repo)
+        
+        if count <= 1:  # Only current issue exists in this repo
             return {
                 "ai_analysis": {"type": "new", "criticality": "low", "confidence": 0, "similar_issues": []},
                 "duplicate_info": {"classification": "new", "similarity": 0, "reuse_type": "minimal"}
             }
         
-        results = chroma.collection.query(
-            query_embeddings=[embedding],
-            n_results=min(10, count),  # Get more results to filter
-            include=["embeddings", "metadatas"]
+        results = chroma.query(
+            owner=owner,
+            repo=repo,
+            embedding=embedding,
+            limit=min(10, count)  # Get more results to filter
         )
         
         max_similarity = 0.0
@@ -81,54 +89,112 @@ def analyze_single_issue(issue):
 import traceback
 
 @router.get("/issues/{owner}/{repo}")
-def fetch_issues(owner: str, repo: str):
+def fetch_issues(owner: str, repo: str, user_token: str = None, page: int = 1, per_page: int = 30):
+    """
+    Fetch issues with pagination, ensuring we return exactly per_page issues (excluding PRs).
+    May need to fetch multiple GitHub pages to achieve this.
+    """
     try:
-        issues = github_fetcher.get_issues(owner, repo)
         cleaned = []
-        for issue in issues:
-            if "pull_request" in issue:
-                continue
+        current_github_page = page
+        total_items_fetched = 0
+        pages_fetched = 0
+        has_more = True
+        
+        # Keep fetching until we have enough issues or run out of pages
+        while len(cleaned) < per_page and has_more:
+            result = github_fetcher.get_issues(owner, repo, user_token, current_github_page, per_page)
+            issues = result["issues"]
+            pagination_info = result["pagination"]
+            
+            if not issues:
+                has_more = False
+                break
+            
+            total_items_fetched += len(issues)
+            pages_fetched += 1
+            
+            for issue in issues:
+                if "pull_request" in issue:
+                    continue  # Skip pull requests
 
-            title = issue.get("title", "")
-            body = issue.get("body", "") or ""
-            issue_id = str(issue["id"])
+                title = issue.get("title", "")
+                body = issue.get("body", "") or ""
+                issue_id = str(issue["id"])
 
-            # Store in ChromaDB if not exists
-            if not chroma.issue_exists(issue_id):
-                embedding = embedder.embed_issue(title, body)
-                chroma.add_issue(
-                    issue_id=issue_id,
-                    embedding=embedding,
-                    metadata={
-                        "number": issue["number"],
-                        "title": title,
-                        "body": body,
-                        "repo": f"{owner}/{repo}",
-                    },
-                )
+                # Categorize the issue
+                category_info = categorizer.categorize(title, body)
+                primary_category = category_info["primary_category"]
+                categories = category_info["categories"]
+                confidence = category_info["confidence"]
 
-            # Analyze each issue
-            analysis_result = analyze_single_issue({
-                "id": issue["id"],
-                "title": title,
-                "body": body
-            })
+                # Store in ChromaDB if not exists
+                if not chroma.issue_exists(owner, repo, issue_id):
+                    embedding = embedder.embed_issue_with_category(title, body, primary_category)
+                    chroma.add_issue(
+                        owner=owner,
+                        repo=repo,
+                        issue_id=issue_id,
+                        embedding=embedding,
+                        metadata={
+                            "number": issue["number"],
+                            "title": title,
+                            "body": body,
+                            "repo": f"{owner}/{repo}",
+                            "category": primary_category,
+                            "categories": ",".join(categories),
+                            "category_confidence": confidence,
+                        },
+                    )
 
-            cleaned.append({
-                "id": issue["id"],
-                "number": issue["number"],
-                "title": title,
-                "body": body,
-                "state": issue["state"],
-                "created_at": issue["created_at"],
-                "updated_at": issue["updated_at"],
-                "labels": [l["name"] for l in issue.get("labels", [])],
-                "ai_analysis": analysis_result["ai_analysis"],
-                "duplicate_info": analysis_result["duplicate_info"]
-            })
+                # Analyze each issue
+                analysis_result = analyze_single_issue(owner, repo, {
+                    "id": issue["id"],
+                    "title": title,
+                    "body": body
+                })
 
-        print("📦 Chroma issue count:", chroma.count())
-        return {"total": len(cleaned), "issues": cleaned}
+                cleaned.append({
+                    "id": issue["id"],
+                    "number": issue["number"],
+                    "title": title,
+                    "body": body,
+                    "state": issue["state"],
+                    "created_at": issue["created_at"],
+                    "updated_at": issue["updated_at"],
+                    "labels": [l["name"] for l in issue.get("labels", [])],
+                    "category": primary_category,
+                    "ai_analysis": analysis_result["ai_analysis"],
+                    "duplicate_info": analysis_result["duplicate_info"]
+                })
+                
+                # Stop if we have enough issues
+                if len(cleaned) >= per_page:
+                    break
+            
+            # Check if there are more pages
+            has_more = pagination_info.get("has_next", False)
+            current_github_page += 1
+
+        print(f"📦 Chroma issue count for {owner}/{repo}:", chroma.count(owner, repo))
+        print(f"📊 Fetched {total_items_fetched} items from {pages_fetched} GitHub page(s), filtered to {len(cleaned)} issues")
+        
+        # Calculate if there are more issues available
+        has_next_page = has_more or len(cleaned) == per_page
+        
+        return {
+            "total": len(cleaned),
+            "issues": cleaned,
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "has_next": has_next_page,
+                "has_prev": page > 1,
+                "count": len(cleaned),
+                "total_fetched": total_items_fetched,
+                "pages_fetched": pages_fetched
+            }
+        }
 
     except Exception:
         print("❌ ROUTE LEVEL ERROR:")
@@ -136,8 +202,38 @@ def fetch_issues(owner: str, repo: str):
         raise HTTPException(status_code=500, detail="Internal error")
 
 
+@router.get("/check-access/{owner}/{repo}")
+def check_repo_access(owner: str, repo: str, user_token: str = None):
+    """
+    Check if repository is accessible and whether it's public or private.
+    
+    Query params:
+        user_token: Optional OAuth token for private repo access
+    """
+    try:
+        visibility = github_fetcher.check_repo_visibility(owner, repo, user_token)
+        return visibility
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/repo/{owner}/{repo}")
-def fetch_repo(owner: str, repo: str):
+def fetch_repo(owner: str, repo: str, request: Request):
+    """Fetch repository details and associate with current user."""
+    from app.auth.auth_service import auth_service
+    
+    # Extract user_id from auth token if available
+    user_id = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        try:
+            token = auth_header.split(" ")[1]
+            payload = auth_service.verify_token(token)
+            if payload:
+                user_id = payload.get("sub")
+        except:
+            pass  # Continue without user_id
+    
     data = github_fetcher.get_repo(owner, repo)
 
     repo_doc = {
@@ -150,11 +246,12 @@ def fetch_repo(owner: str, repo: str):
         "forks": data["forks_count"],
         "open_issues": data["open_issues_count"],
         "last_analyzed_at": datetime.utcnow(),
+        "user_id": user_id,  # Add user_id
     }
 
-    # ✅ UPSERT (insert if not exists)
+    # ✅ UPSERT (insert if not exists) - unique per user
     repos_collection.update_one(
-        {"full_name": data["full_name"]},
+        {"full_name": data["full_name"], "user_id": user_id},
         {
             "$set": repo_doc,
             "$setOnInsert": {"created_at": datetime.utcnow()},
@@ -183,9 +280,32 @@ def rate_limit():
 
 
 @router.get("/repos")
-def get_saved_repos():
-    repos = list(
-        repos_collection.find({}, {"_id": 0})
-        .sort("last_analyzed_at", -1)
-    )
-    return repos
+def get_saved_repos(request: Request):
+    """Get repositories analyzed by the current user."""
+    from app.auth.auth_service import auth_service
+    
+    # Extract token from Authorization header
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        # Return empty list if not authenticated (don't require auth for backward compatibility)
+        return []
+    
+    try:
+        token = auth_header.split(" ")[1]
+        payload = auth_service.verify_token(token)
+        
+        if not payload:
+            return []
+        
+        user_id = payload.get("sub")
+        
+        # Filter repos by user_id
+        repos = list(
+            repos_collection.find({"user_id": user_id}, {"_id": 0})
+            .sort("last_analyzed_at", -1)
+        )
+        return repos
+    except:
+        # If token verification fails, return empty list
+        return []
+

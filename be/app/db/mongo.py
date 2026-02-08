@@ -8,3 +8,9 @@ db = client["git_intellisolve"]
 repos_collection = db["repositories"]
 # ✅ Collection for learned solutions
 solution_memory = db["solution_memory"]
+
+
+def get_database():
+    """Get the MongoDB database instance."""
+    return db
+

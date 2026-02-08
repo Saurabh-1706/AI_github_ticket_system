@@ -27,6 +27,24 @@ class EmbeddingService:
         text = f"{title}\n{body}"
         model = self._load_model()
         return model.encode(text).tolist()
+    
+    def embed_issue_with_category(self, title: str, body: str, category: str):
+        """
+        Embed issue with category prefix for improved similarity matching.
+        
+        Args:
+            title: Issue title
+            body: Issue body
+            category: Issue category (e.g., 'bug', 'feature')
+            
+        Returns:
+            Embedding vector as list
+        """
+        # Prepend category to improve categorization-aware similarity
+        prefix = f"[{category.upper()}]"
+        text = f"{prefix} {title}\n{body}"
+        model = self._load_model()
+        return model.encode(text).tolist()
 
     def embed_text(self, text: str):
         model = self._load_model()

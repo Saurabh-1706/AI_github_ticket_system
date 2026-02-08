@@ -40,3 +40,25 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# ChromaDB
+chroma/
+chroma_db/
+*.chroma
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

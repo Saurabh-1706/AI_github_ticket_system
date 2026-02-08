@@ -1,4 +1,5 @@
 import "./globals.css";
+import { AuthProvider } from "./components/AuthProvider";
 
 export default function RootLayout({
   children,
@@ -8,7 +9,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-zinc-50 text-zinc-900">
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );
