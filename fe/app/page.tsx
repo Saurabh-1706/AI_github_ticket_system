@@ -8,24 +8,21 @@ import UserMenu from "./components/UserMenu";
 import RepoInput from "./components/RepoInput";
 import { fetchSavedRepos } from "./services/github";
 
-/* ✅ Define a proper type */
 interface SavedRepo {
   owner: string;
   repo: string;
   full_name: string;
   stars: number;
   language: string;
+  description?: string;
 }
 
 export default function Home() {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
-
-  /* ✅ Hooks MUST be inside component */
   const [savedRepos, setSavedRepos] = useState<SavedRepo[]>([]);
 
   useEffect(() => {
-    // Fetch saved repos with auth token if available
     const loadRepos = async () => {
       try {
         const token = localStorage.getItem("auth_token");
@@ -37,17 +34,22 @@ export default function Home() {
     };
     
     loadRepos();
-  }, [isAuthenticated]); // Refetch when auth state changes
+  }, [isAuthenticated]);
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-black">
-      {/* Header with Auth */}
-      <header className="border-b border-zinc-200 bg-white/80 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/80">
-        <div className="mx-auto max-w-7xl px-4 py-4">
+    <div className="min-h-screen">
+      {/* Top Header */}
+      <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white/80 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/80">
+        <div className="px-6 py-4">
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
-              Git IntelliSolve
-            </h1>
+            <div>
+              <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
+                Dashboard
+              </h1>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                AI-powered GitHub issue analysis
+              </p>
+            </div>
             
             {/* Auth Section */}
             <div className="flex items-center gap-4">
@@ -59,15 +61,15 @@ export default function Home() {
                     <div className="flex items-center gap-3">
                       <Link
                         href="/login"
-                        className="text-sm font-medium text-zinc-700 transition-colors hover:text-black dark:text-zinc-300 dark:hover:text-white"
+                        className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
                       >
-                        Sign in
+                        Sign In
                       </Link>
                       <Link
                         href="/register"
-                        className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
+                        className="rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 px-4 py-2 text-sm font-medium text-white shadow-lg transition-all hover:shadow-xl"
                       >
-                        Sign up
+                        Get Started
                       </Link>
                     </div>
                   )}
@@ -79,63 +81,104 @@ export default function Home() {
       </header>
 
       {/* Main Content */}
-      <main className="flex items-center justify-center px-6 py-16">
-        <div className="w-full max-w-3xl">
-          {/* Card */}
-          <div className="rounded-2xl border border-zinc-200 bg-white p-10 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-            {/* App Name */}
-            <h2 className="text-4xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-              AI-Powered GitHub Issue Analysis
+      <div className="p-6">
+        {/* Hero Section */}
+        <div className="mb-8 rounded-2xl bg-gradient-to-br from-blue-50 to-purple-50 p-8 dark:from-blue-950/20 dark:to-purple-950/20">
+          <div className="mx-auto max-w-3xl text-center">
+            <h2 className="mb-4 text-4xl font-bold text-zinc-900 dark:text-white">
+              Analyze GitHub Issues with AI
             </h2>
-
-            {/* Tagline */}
-            <p className="mt-3 max-w-xl text-zinc-600 dark:text-zinc-400">
-              AI-powered GitHub issue analysis. Detect duplicates, analyze
-              criticality, and reuse proven solutions — instantly.
+            <p className="mb-6 text-lg text-zinc-600 dark:text-zinc-400">
+              Get intelligent categorization, duplicate detection, and AI-powered solutions
             </p>
-
-            {/* Input Section */}
-            <div className="mt-8">
+            
+            {/* Repository Input */}
+            <div className="mx-auto max-w-2xl">
               <RepoInput />
             </div>
-
-            {/* Footer hint */}
-            <p className="mt-6 text-xs text-zinc-500 dark:text-zinc-500">
-              Example: https://github.com/facebook/react
-            </p>
-          </div>
-
-          {/* Saved repos */}
-          <div className="mt-10 text-zinc-900 dark:text-zinc-100">
-            <h3 className="text-lg font-semibold mb-4">
-              Previously Analyzed Repositories
-            </h3>
-
-            {savedRepos.length === 0 && (
-              <p className="text-zinc-500">No repositories analyzed yet.</p>
-            )}
-
-            <ul className="space-y-3">
-              {savedRepos.map((repo) => (
-                <li
-                  key={repo.full_name}
-                  className="cursor-pointer rounded-lg border p-4 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-                  onClick={() =>
-                    router.push(
-                      `/repository?owner=${repo.owner}&repo=${repo.repo}`
-                    )
-                  }
-                >
-                  <div className="font-medium">{repo.full_name}</div>
-                  <div className="text-sm text-zinc-500">
-                    ⭐ {repo.stars} · {repo.language}
-                  </div>
-                </li>
-              ))}
-            </ul>
           </div>
         </div>
-      </main>
+
+        {/* Previously Analyzed Repositories */}
+        {savedRepos.length > 0 && (
+          <div>
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">
+                  Previously Analyzed Repositories
+                </h2>
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                  {isAuthenticated ? "Your analyzed repositories" : "Recently analyzed"}
+                </p>
+              </div>
+            </div>
+
+            {/* Repository Grid */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {savedRepos.map((repo) => (
+                <Link
+                  key={repo.full_name}
+                  href={`/repository?owner=${repo.owner}&repo=${repo.repo}`}
+                  className="group rounded-xl border border-zinc-200 bg-white p-6 shadow-sm transition-all hover:shadow-lg dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
+                >
+                  <div className="mb-3 flex items-start justify-between">
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-zinc-900 group-hover:text-blue-600 dark:text-white dark:group-hover:text-blue-400">
+                        {repo.repo}
+                      </h3>
+                      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                        {repo.owner}
+                      </p>
+                    </div>
+                  </div>
+
+                  {repo.description && (
+                    <p className="mb-4 line-clamp-2 text-sm text-zinc-600 dark:text-zinc-400">
+                      {repo.description}
+                    </p>
+                  )}
+
+                  <div className="flex items-center gap-4 text-sm text-zinc-500 dark:text-zinc-400">
+                    {repo.language && (
+                      <div className="flex items-center gap-1">
+                        <span className="h-3 w-3 rounded-full bg-blue-500"></span>
+                        <span>{repo.language}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1">
+                      <span>⭐</span>
+                      <span>{repo.stars?.toLocaleString() || 0}</span>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Empty State */}
+        {savedRepos.length === 0 && (
+          <div className="rounded-xl border-2 border-dashed border-zinc-300 bg-white p-12 text-center dark:border-zinc-700 dark:bg-zinc-900">
+            <div className="mx-auto max-w-md">
+              <div className="mb-4 text-6xl">🔍</div>
+              <h3 className="mb-2 text-xl font-semibold text-zinc-900 dark:text-white">
+                No repositories analyzed yet
+              </h3>
+              <p className="mb-6 text-zinc-600 dark:text-zinc-400">
+                Start by entering a GitHub repository above to analyze its issues
+              </p>
+              {!isAuthenticated && (
+                <Link
+                  href="/register"
+                  className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 px-6 py-3 font-medium text-white shadow-lg transition-all hover:shadow-xl"
+                >
+                  Sign up to save your analysis
+                </Link>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

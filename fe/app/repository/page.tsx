@@ -1,15 +1,19 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { fetchRepo, fetchIssues, checkRepoAccess, getUserToken, analyzeIssue } from "../services/github";
 import { streamIssues } from "../services/streaming";
 import RepoCard from "../components/RepoCard";
 import IssueList from "../components/IssueList";
+import IssueTableView from "../components/IssueTableView";
 import IssueDetail from "../components/IssueDetail";
 import PrivateRepoAuth from "../components/PrivateRepoAuth";
 import Pagination from "../components/Pagination";
 import LoadingSpinner from "../components/LoadingSpinner";
+import ViewToggle from "../components/ViewToggle";
+import CardFilter, { type CardFilters } from "../components/CardFilter";
+import ItemsPerPageSelector from "../components/ItemsPerPageSelector";
 import type { Issue, PaginationInfo } from "../types";
 
 export default function RepositoryPage() {
@@ -23,8 +27,21 @@ export default function RepositoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
   
+  // View state
+  const [view, setView] = useState<"card" | "table">("card");
+  
+  // Card filter state
+  const [cardFilters, setCardFilters] = useState<CardFilters>({
+    state: "",
+    category: "",
+    type: "",
+    criticality: "",
+    minSimilarity: 0,
+  });
+  
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(30);
   const [paginationInfo, setPaginationInfo] = useState<PaginationInfo | null>(null);
   
   // OAuth and private repo state
@@ -86,11 +103,11 @@ export default function RepositoryPage() {
                 const repoRes = await fetchRepo(owner, repo, token, authToken || undefined);
                 setRepoData(repoRes);
                 
-                // Use batch loading (streaming temporarily disabled for debugging)
+                // Fetch issues with pagination
                 setIssues([]);
                 setLoading(true);
                 
-                const issuesRes = await fetchIssues(owner, repo, token, currentPage);
+                const issuesRes = await fetchIssues(owner, repo, token, currentPage, itemsPerPage);
                 setIssues(issuesRes.issues);
                 setPaginationInfo(issuesRes.pagination);
                 setLoading(false);
@@ -108,26 +125,14 @@ export default function RepositoryPage() {
           const repoRes = await fetchRepo(owner, repo, userToken || undefined, authToken || undefined);
           setRepoData(repoRes);
           
-          // Use batch loading (streaming temporarily disabled for debugging)
+          // Fetch issues with pagination
           setIssues([]);
           setLoading(true);
           
-          const issuesRes = await fetchIssues(owner, repo, userToken || undefined, currentPage);
+          const issuesRes = await fetchIssues(owner, repo, userToken || undefined, currentPage, itemsPerPage);
           setIssues(issuesRes.issues);
           setPaginationInfo(issuesRes.pagination);
           setLoading(false);
-          
-          // TODO: Re-enable streaming once debugged
-          // try {
-          //   console.log("🔄 Attempting to stream issues...");
-          //   await streamIssues(...);
-          // } catch (streamError) {
-          //   console.warn("⚠️ Streaming failed, falling back to batch loading:", streamError);
-          //   const issuesRes = await fetchIssues(owner, repo, userToken || undefined, currentPage);
-          //   setIssues(issuesRes.issues);
-          //   setPaginationInfo(issuesRes.pagination);
-          //   setLoading(false);
-          // }
         } else {
           console.log("🔒 Private repo requires OAuth authorization");
         }
@@ -140,23 +145,58 @@ export default function RepositoryPage() {
     };
 
     loadData();
-  }, [owner, repo, userToken, githubUsername, currentPage]); // Added currentPage dependency
+  }, [owner, repo, userToken, githubUsername, currentPage, itemsPerPage]);
 
   useEffect(() => {
     console.log("selectedIssue =", selectedIssue);
   }, [selectedIssue]);
-
 
   const handleSelectSimilar = (similar: any) => {
     const match = issues.find((i) => i.number === similar.number);
     if (match) setSelectedIssue(match);
   };
 
-  const handlePageChange = async (newPage: number) => {
+  const handlePageChange = (newPage: number) => {
     setCurrentPage(newPage);
-    setLoading(true);
-    // The useEffect will reload data with the new page
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  // Filter issues on current page (for card view only)
+  const filteredIssues = useMemo(() => {
+    if (view !== "card") return issues;
+    
+    return issues.filter(issue => {
+      // State filter
+      if (cardFilters.state && issue.state !== cardFilters.state) {
+        return false;
+      }
+      
+      // Category filter
+      if (cardFilters.category && issue.category !== cardFilters.category) {
+        return false;
+      }
+      
+      // Type filter
+      if (cardFilters.type && issue.duplicate_info?.classification !== cardFilters.type) {
+        return false;
+      }
+      
+      // Criticality filter
+      if (cardFilters.criticality && issue.ai_analysis?.criticality?.toLowerCase() !== cardFilters.criticality.toLowerCase()) {
+        return false;
+      }
+      
+      // Minimum similarity filter
+      if (cardFilters.minSimilarity > 0) {
+        const similarity = issue.duplicate_info?.similarity ?? 0;
+        if (similarity * 100 < cardFilters.minSimilarity) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+  }, [issues, cardFilters, view]);
 
   if (loading && issues.length === 0) {
     return (
@@ -207,37 +247,50 @@ export default function RepositoryPage() {
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-black">
-      <main className="mx-auto max-w-7xl px-4 py-6">
-        <div className="relative flex h-[calc(100vh-64px)] overflow-hidden">
-          {/* LEFT: ISSUE LIST */}
+      <main className="mx-auto max-w-[1600px] py-8">
+        <div className="flex gap-6">
+          {/* Main content - issues list */}
           <div
             className={`
               transition-all duration-300
               ${selectedIssue ? "hidden md:block md:w-1/2 lg:w-3/5" : "w-full"}
-              overflow-y-auto no-scrollbar pr-2
             `}
           >
 
-            <RepoCard repo={repoData} />
-            <IssueList
-              issues={issues}
-              onSelect={handleSelectIssue}
-              onSelectSimilar={handleSelectSimilar}
-            />
-            
-            {/* Loading indicator while streaming */}
-            {loading && issues.length > 0 && (
-              <div className="mt-4 flex items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-zinc-200 border-t-black dark:border-zinc-800 dark:border-t-white" />
-                <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                  Loading more issues... ({issues.length} loaded)
-                </span>
+            <div className="mb-6 space-y-4 px-4">
+              <RepoCard repo={repoData} />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                    Showing {filteredIssues.length} of {issues.length} issues on this page
+                  </span>
+                  <ItemsPerPageSelector value={itemsPerPage} onChange={setItemsPerPage} />
+                </div>
+                <div className="flex gap-2">
+                  {view === "card" && <CardFilter onFilterChange={setCardFilters} />}
+                  <ViewToggle view={view} onViewChange={setView} />
+                </div>
               </div>
-            )}
+            </div>
+
+            <div className={view === "card" ? "px-4" : ""}>
+              {view === "card" ? (
+                <IssueList
+                  issues={filteredIssues}
+                  onSelect={handleSelectIssue}
+                  onSelectSimilar={handleSelectSimilar}
+                />
+              ) : (
+                <IssueTableView
+                  issues={issues}
+                  onIssueClick={handleSelectIssue}
+                />
+              )}
+            </div>
             
             {/* Pagination */}
-            {paginationInfo && !loading && (
-              <div className="mt-4">
+            {paginationInfo && (
+              <div className="mt-6 px-4">
                 <Pagination
                   currentPage={paginationInfo.page}
                   hasNext={paginationInfo.has_next}

@@ -70,6 +70,45 @@ export async function fetchIssues(owner: string, repo: string, userToken?: strin
 }
 
 /**
+ * Fetch ALL issues from repository (paginating through GitHub API)
+ */
+export async function fetchAllIssues(
+  owner: string,
+  repo: string,
+  userToken?: string,
+  onProgress?: (loaded: number, total: number) => void
+) {
+  const allIssues: any[] = [];
+  let page = 1;
+  let hasMore = true;
+  let total = 0;
+
+  while (hasMore) {
+    const data = await fetchIssues(owner, repo, userToken, page, 100); // Fetch 100 per page for efficiency
+
+    if (page === 1) {
+      total = data.total || 0;
+    }
+
+    allIssues.push(...data.issues);
+
+    // Report progress
+    if (onProgress) {
+      onProgress(allIssues.length, total);
+    }
+
+    // Check if there are more pages
+    hasMore = data.pagination?.has_next || false;
+    page++;
+  }
+
+  return {
+    issues: allIssues,
+    total: allIssues.length
+  };
+}
+
+/**
  * Analyze a single issue within repository context
  */
 export async function analyzeIssue(owner: string, repo: string, issue: any) {

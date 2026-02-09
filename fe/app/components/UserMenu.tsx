@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "./AuthProvider";
 import { logoutUser, getAuthToken } from "../services/auth";
+import ThemeToggle from "./ThemeToggle";
 
 export default function UserMenu() {
   const { user, logout } = useAuth();
@@ -130,6 +131,13 @@ export default function UserMenu() {
 
           {/* Menu Items */}
           <div className="p-2">
+            {/* Theme Toggle */}
+            <ThemeToggle />
+            
+            {/* Divider */}
+            <div className="my-2 border-t border-zinc-200 dark:border-zinc-800"></div>
+            
+            {/* Logout */}
             <button
               onClick={handleLogout}
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
