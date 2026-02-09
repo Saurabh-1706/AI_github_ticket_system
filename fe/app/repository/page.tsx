@@ -151,6 +151,13 @@ export default function RepositoryPage() {
     console.log("selectedIssue =", selectedIssue);
   }, [selectedIssue]);
 
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    if (currentPage !== 1) {
+      setCurrentPage(1);
+    }
+  }, [cardFilters]);
+
   const handleSelectSimilar = (similar: any) => {
     const match = issues.find((i) => i.number === similar.number);
     if (match) setSelectedIssue(match);
@@ -161,10 +168,8 @@ export default function RepositoryPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Filter issues on current page (for card view only)
+  // Filter issues for both card and table views
   const filteredIssues = useMemo(() => {
-    if (view !== "card") return issues;
-    
     return issues.filter(issue => {
       // State filter
       if (cardFilters.state && issue.state !== cardFilters.state) {
@@ -196,7 +201,7 @@ export default function RepositoryPage() {
       
       return true;
     });
-  }, [issues, cardFilters, view]);
+  }, [issues, cardFilters]);
 
   if (loading && issues.length === 0) {
     return (
@@ -267,7 +272,7 @@ export default function RepositoryPage() {
                   <ItemsPerPageSelector value={itemsPerPage} onChange={setItemsPerPage} />
                 </div>
                 <div className="flex gap-2">
-                  {view === "card" && <CardFilter onFilterChange={setCardFilters} />}
+                  <CardFilter filters={cardFilters} onFilterChange={setCardFilters} />
                   <ViewToggle view={view} onViewChange={setView} />
                 </div>
               </div>
@@ -282,7 +287,7 @@ export default function RepositoryPage() {
                 />
               ) : (
                 <IssueTableView
-                  issues={issues}
+                  issues={filteredIssues}
                   onIssueClick={handleSelectIssue}
                 />
               )}

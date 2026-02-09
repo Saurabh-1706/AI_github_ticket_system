@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 
 interface CardFilterProps {
+  filters: CardFilters;
   onFilterChange: (filters: CardFilters) => void;
 }
 
@@ -14,15 +15,8 @@ export interface CardFilters {
   minSimilarity: number;
 }
 
-export default function CardFilter({ onFilterChange }: CardFilterProps) {
+export default function CardFilter({ filters, onFilterChange }: CardFilterProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [filters, setFilters] = useState<CardFilters>({
-    state: "",
-    category: "",
-    type: "",
-    criticality: "",
-    minSimilarity: 0,
-  });
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown when clicking outside
@@ -41,7 +35,6 @@ export default function CardFilter({ onFilterChange }: CardFilterProps) {
 
   const handleFilterChange = (key: keyof CardFilters, value: string | number) => {
     const newFilters = { ...filters, [key]: value };
-    setFilters(newFilters);
     onFilterChange(newFilters);
   };
 
@@ -53,7 +46,6 @@ export default function CardFilter({ onFilterChange }: CardFilterProps) {
       criticality: "",
       minSimilarity: 0,
     };
-    setFilters(emptyFilters);
     onFilterChange(emptyFilters);
   };
 

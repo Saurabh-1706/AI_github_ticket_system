@@ -8,7 +8,7 @@ import { loginUser, initiateGoogleOAuth, initiateGitHubOAuth, storeAuthToken, st
 
 export default function LoginPage() {
   const router = useRouter();
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -33,7 +33,10 @@ export default function LoginPage() {
       storeUserData(response.user);
       
       // Update AuthProvider state immediately
-      window.location.href = "/"; // Force full page reload to reinitialize auth
+      login(response.access_token, response.user);
+      
+      // Use router.push instead of window.location to avoid race condition
+      router.push("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

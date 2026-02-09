@@ -8,7 +8,7 @@ import { registerUser, initiateGoogleOAuth, initiateGitHubOAuth, storeAuthToken,
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
@@ -44,8 +44,11 @@ export default function RegisterPage() {
       storeAuthToken(response.access_token);
       storeUserData(response.user);
       
-      // Force full page reload to reinitialize auth
-      window.location.href = "/";
+      // Update AuthProvider state immediately
+      login(response.access_token, response.user);
+      
+      // Use router.push instead of window.location to avoid race condition
+      router.push("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
