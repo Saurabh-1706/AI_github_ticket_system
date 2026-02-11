@@ -14,7 +14,7 @@ export default function Sidebar() {
     { href: "/", label: "Home", icon: "🏠" },
     { href: "/repository", label: "Analyze Repo", icon: "🔍" },
     ...(isAuthenticated ? [
-      { href: "/my-repos", label: "My Repositories", icon: "📊" },
+      { href: "/repositories", label: "My Repositories", icon: "📊" },
     ] : []),
   ];
 

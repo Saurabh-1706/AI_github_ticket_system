@@ -156,28 +156,119 @@ export default function Home() {
           </div>
         )}
 
-        {/* Empty State */}
-        {savedRepos.length === 0 && (
-          <div className="rounded-xl border-2 border-dashed border-zinc-300 bg-white p-12 text-center dark:border-zinc-700 dark:bg-zinc-900">
-            <div className="mx-auto max-w-md">
-              <div className="mb-4 text-6xl">🔍</div>
-              <h3 className="mb-2 text-xl font-semibold text-zinc-900 dark:text-white">
-                No repositories analyzed yet
-              </h3>
-              <p className="mb-6 text-zinc-600 dark:text-zinc-400">
-                Start by entering a GitHub repository above to analyze its issues
-              </p>
-              {!isAuthenticated && (
-                <Link
-                  href="/register"
-                  className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 px-6 py-3 font-medium text-white shadow-lg transition-all hover:shadow-xl"
-                >
-                  Sign up to save your analysis
-                </Link>
-              )}
+        
+
+        {/* Recently Analyzed Repositories */}
+        <RecentlyAnalyzedRepos />
+
+      </div>
+    </div>
+  );
+}
+
+// Recently Analyzed Repositories Component
+function RecentlyAnalyzedRepos() {
+  const [repositories, setRepositories] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const router = useRouter();
+
+  useEffect(() => {
+    const loadRepos = async () => {
+      try {
+        const { fetchRepositories } = await import("./services/github");
+        const repos = await fetchRepositories();
+        // Get latest 3
+        setRepositories(repos.slice(0, 3));
+      } catch (error) {
+        console.error("Failed to load repositories:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadRepos();
+  }, []);
+
+  if (loading || repositories.length === 0) {
+    return null;
+  }
+
+  const formatDate = (dateString: string) => {
+    if (!dateString) return "Never";
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    if (days < 30) return `${days}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  return (
+    <div className="mt-12">
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">
+            Recently Analyzed Repositories
+          </h2>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Your latest analyzed repositories
+          </p>
+        </div>
+        <Link
+          href="/repositories"
+          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+        >
+          View All →
+        </Link>
+      </div>
+
+      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        {repositories.map((repo) => (
+          <div
+            key={repo.full_name}
+            onClick={() => router.push(`/repository?owner=${repo.owner}&repo=${repo.name}`)}
+            className="group cursor-pointer rounded-xl border border-zinc-200 bg-white p-6 shadow-sm transition-all hover:shadow-md dark:border-zinc-700 dark:bg-zinc-800"
+          >
+            {/* Repository icon */}
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 text-white">
+                <svg className="h-6 w-6" fill="currentColor" viewBox="0 0 16 16">
+                  <path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/>
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-lg font-semibold text-zinc-900 dark:text-white truncate">
+                  {repo.name}
+                </h3>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
+                  {repo.owner}
+                </p>
+              </div>
+            </div>
+
+            {/* Stats */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-zinc-600 dark:text-zinc-400">Issues</span>
+                <span className="font-medium text-zinc-900 dark:text-white">
+                  {repo.issue_count}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-zinc-600 dark:text-zinc-400">Last synced</span>
+                <span className="font-medium text-zinc-900 dark:text-white">
+                  {formatDate(repo.last_synced)}
+                </span>
+              </div>
             </div>
           </div>
-        )}
+        ))}
       </div>
     </div>
   );

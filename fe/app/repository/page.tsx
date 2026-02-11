@@ -2,8 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState, useMemo } from "react";
-import { fetchRepo, fetchIssues, checkRepoAccess, getUserToken, analyzeIssue } from "../services/github";
-import { streamIssues } from "../services/streaming";
+import { fetchRepo, checkRepoAccess, getUserToken, analyzeIssue, fetchCachedIssues, syncRepository, type CacheIssuesParams } from "../services/github";
 import RepoCard from "../components/RepoCard";
 import IssueList from "../components/IssueList";
 import IssueTableView from "../components/IssueTableView";
@@ -14,7 +13,7 @@ import LoadingSpinner from "../components/LoadingSpinner";
 import ViewToggle from "../components/ViewToggle";
 import CardFilter, { type CardFilters } from "../components/CardFilter";
 import ItemsPerPageSelector from "../components/ItemsPerPageSelector";
-import type { Issue, PaginationInfo } from "../types";
+import type { Issue } from "../types";
 
 export default function RepositoryPage() {
   const params = useSearchParams();
@@ -42,7 +41,11 @@ export default function RepositoryPage() {
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(30);
-  const [paginationInfo, setPaginationInfo] = useState<PaginationInfo | null>(null);
+  const [totalIssues, setTotalIssues] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  
+  // Cache info state
+  const [cacheInfo, setCacheInfo] = useState<any>(null);
   
   // OAuth and private repo state
   const [isPrivate, setIsPrivate] = useState(false);
@@ -103,13 +106,23 @@ export default function RepositoryPage() {
                 const repoRes = await fetchRepo(owner, repo, token, authToken || undefined);
                 setRepoData(repoRes);
                 
-                // Fetch issues with pagination
+                // Fetch issues from cache
                 setIssues([]);
                 setLoading(true);
                 
-                const issuesRes = await fetchIssues(owner, repo, token, currentPage, itemsPerPage);
+                const cacheParams: CacheIssuesParams = {
+                  owner,
+                  repo,
+                  page: currentPage,
+                  per_page: itemsPerPage,
+                  user_token: token
+                };
+                
+                const issuesRes = await fetchCachedIssues(cacheParams);
                 setIssues(issuesRes.issues);
-                setPaginationInfo(issuesRes.pagination);
+                setTotalIssues(issuesRes.pagination.total);
+                setTotalPages(issuesRes.pagination.total_pages);
+                setCacheInfo(issuesRes.cache_info);
                 setLoading(false);
               }
             } else {
@@ -125,14 +138,40 @@ export default function RepositoryPage() {
           const repoRes = await fetchRepo(owner, repo, userToken || undefined, authToken || undefined);
           setRepoData(repoRes);
           
-          // Fetch issues with pagination
+          // Fetch issues from cache with filters
           setIssues([]);
           setLoading(true);
           
-          const issuesRes = await fetchIssues(owner, repo, userToken || undefined, currentPage, itemsPerPage);
+          const cacheParams: CacheIssuesParams = {
+            owner,
+            repo,
+            page: currentPage,
+            per_page: itemsPerPage,
+            state: cardFilters.state || undefined,
+            category: cardFilters.category || undefined,
+            type: cardFilters.type || undefined,
+            criticality: cardFilters.criticality || undefined,
+            min_similarity: cardFilters.minSimilarity > 0 ? cardFilters.minSimilarity : undefined,
+            user_token: userToken || undefined
+          };
+          
+          const issuesRes = await fetchCachedIssues(cacheParams);
           setIssues(issuesRes.issues);
-          setPaginationInfo(issuesRes.pagination);
+          setTotalIssues(issuesRes.pagination.total);
+          setTotalPages(issuesRes.pagination.total_pages);
+          setCacheInfo(issuesRes.cache_info);
           setLoading(false);
+          
+          // Background sync to get latest issues
+          if (!issuesRes.cache_info.is_fresh) {
+            console.log("🔄 Cache is stale, syncing in background...");
+            syncRepository(owner, repo, false, userToken || undefined)
+              .then(() => {
+                console.log("✅ Background sync complete");
+                // Optionally refresh data after sync
+              })
+              .catch(err => console.error("❌ Background sync failed:", err));
+          }
         } else {
           console.log("🔒 Private repo requires OAuth authorization");
         }
@@ -145,7 +184,7 @@ export default function RepositoryPage() {
     };
 
     loadData();
-  }, [owner, repo, userToken, githubUsername, currentPage, itemsPerPage]);
+  }, [owner, repo, userToken, githubUsername, currentPage, itemsPerPage, cardFilters]);
 
   useEffect(() => {
     console.log("selectedIssue =", selectedIssue);
@@ -294,16 +333,16 @@ export default function RepositoryPage() {
             </div>
             
             {/* Pagination */}
-            {paginationInfo && (
+            {totalPages > 0 && (
               <div className="mt-6 px-4">
                 <Pagination
-                  currentPage={paginationInfo.page}
-                  hasNext={paginationInfo.has_next}
-                  hasPrev={paginationInfo.has_prev}
+                  currentPage={currentPage}
+                  hasNext={currentPage < totalPages}
+                  hasPrev={currentPage > 1}
                   onPageChange={handlePageChange}
-                  totalIssues={paginationInfo.count}
-                  totalFetched={paginationInfo.total_fetched}
-                  pagesFetched={paginationInfo.pages_fetched}
+                  totalIssues={totalIssues}
+                  totalFetched={totalIssues}
+                  pagesFetched={totalPages}
                 />
               </div>
             )}

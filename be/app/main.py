@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
-from app.api import github, analysis, vector, duplicates, solution, oauth, streaming, auth
+from app.api import github, analysis, vector, duplicates, solution, oauth, streaming, auth, cache
 from app.middleware.error_handlers import register_exception_handlers
 from app.middleware.logging import log_requests_middleware
 
@@ -50,6 +50,7 @@ app.include_router(solution.router, prefix="/api/solution")
 app.include_router(oauth.router)
 app.include_router(streaming.router, prefix="/api/github")
 app.include_router(auth.router)
+app.include_router(cache.router)
 
 # -----------------------------
 # Health Check

@@ -5,7 +5,7 @@ interface ItemsPerPageSelectorProps {
   onChange: (value: number) => void;
 }
 
-const OPTIONS = [10, 25, 50, 100];
+const OPTIONS = [10, 25, 30, 50, 100];
 
 export default function ItemsPerPageSelector({ value, onChange }: ItemsPerPageSelectorProps) {
   return (
