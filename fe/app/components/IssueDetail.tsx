@@ -23,6 +23,17 @@ export default function IssueDetail({
     );
   }
 
+  const getTypeColor = (type?: string) => {
+    switch (type?.toLowerCase()) {
+      case "bug": return "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400";
+      case "feature": return "bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400";
+      case "documentation": return "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400";
+      case "question": return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400";
+      case "enhancement": return "bg-purple-100 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400";
+      default: return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+    }
+  };
+
   return (
     <div className="flex h-full flex-col bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
       {/* ================= HEADER ================= */}
@@ -57,12 +68,12 @@ export default function IssueDetail({
         {/* Labels */}
         {issue.labels?.length > 0 && (
           <div className="mt-6 flex flex-wrap gap-2">
-            {issue.labels.map((label: string) => (
+            {issue.labels.map((label: any) => (
               <span
-                key={label}
+                key={typeof label === 'string' ? label : label.id}
                 className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
               >
-                {label}
+                {typeof label === 'string' ? label : label.name}
               </span>
             ))}
           </div>
@@ -76,7 +87,16 @@ export default function IssueDetail({
             </h3>
 
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-              <Info label="Type" value={issue.ai_analysis.type ?? "—"} />
+              <div>
+                <p className="text-xs uppercase tracking-wide text-zinc-400">Type</p>
+                {issue.ai_analysis.type ? (
+                  <span className={`mt-1 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize ${getTypeColor(issue.ai_analysis.type)}`}>
+                    {issue.ai_analysis.type}
+                  </span>
+                ) : (
+                  <p className="mt-0.5 font-medium">—</p>
+                )}
+              </div>
               <Info
                 label="Criticality"
                 value={issue.ai_analysis.criticality ?? "—"}

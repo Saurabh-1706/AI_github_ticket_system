@@ -278,28 +278,16 @@ class CacheService:
         try:
             from app.core.embedder import embedder
             from app.core.chroma_manager import chroma_manager
+            from app.ai.categorizer import categorizer
             
-            title_lower = issue_data["title"].lower()
-            body_lower = issue_data.get("body", "").lower()
-            combined_text = f"{title_lower} {body_lower}"
+            title = issue_data["title"]
+            body = issue_data.get("body", "")
             
-            # Simple category detection based on keywords
-            category = "unknown"
-            if any(word in combined_text for word in ["bug", "error", "crash", "broken", "fail"]):
-                category = "bug"
-            elif any(word in combined_text for word in ["feature", "enhancement", "add", "implement"]):
-                category = "feature"
-            elif any(word in combined_text for word in ["doc", "documentation", "readme", "guide"]):
-                category = "documentation"
-            elif any(word in combined_text for word in ["question", "how to", "help"]):
-                category = "question"
-            
-            # Simple criticality assessment
-            criticality = "medium"
-            if any(word in combined_text for word in ["critical", "urgent", "crash", "security", "vulnerability"]):
-                criticality = "high"
-            elif any(word in combined_text for word in ["minor", "typo", "documentation", "cosmetic"]):
-                criticality = "low"
+            # Use categorizer to determine issue type (SAME AS github.py)
+            category_info = categorizer.categorize(title, body)
+            primary_category = category_info["primary_category"]
+            issue_type = primary_category  # Use categorizer result directly
+            category = issue_type  # For backward compatibility
             
             # Generate embedding for this issue
             embedding = embedder.embed_issue(
@@ -321,6 +309,9 @@ class CacheService:
             if similar_issues:
                 max_similarity = max(issue['similarity'] for issue in similar_issues)
             
+            # Criticality based on similarity score (SAME AS github.py line 92)
+            criticality = "high" if max_similarity >= 0.85 else "medium" if max_similarity >= 0.7 else "low"
+            
             # Determine classification based on max similarity
             if max_similarity >= 0.85:
                 classification = "duplicate"
@@ -338,7 +329,10 @@ class CacheService:
             return {
                 "category": category,
                 "ai_analysis": {
-                    "criticality": criticality
+                    "type": issue_type,  # From categorizer (bug, feature, documentation, etc.)
+                    "criticality": criticality,  # Based on similarity score
+                    "confidence": round(max_similarity, 2),  # Similarity as confidence
+                    "similar_issues": similar_issues
                 },
                 "duplicate_info": duplicate_info
             }
@@ -347,7 +341,12 @@ class CacheService:
             logger.error(f"AI analysis failed: {e}", exc_info=True)
             return {
                 "category": "unknown",
-                "ai_analysis": {"criticality": "medium"},
+                "ai_analysis": {
+                    "type": "unknown",
+                    "criticality": "medium",
+                    "confidence": 0.0,
+                    "similar_issues": []
+                },
                 "duplicate_info": {"classification": "new", "similarity": 0, "similar_issues": []}
             }
     

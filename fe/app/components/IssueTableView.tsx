@@ -18,6 +18,17 @@ export default function IssueTableView({ issues, onIssueClick }: IssueTableViewP
     }
   };
 
+  const getTypeColor = (type?: string) => {
+    switch (type?.toLowerCase()) {
+      case "bug": return "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400";
+      case "feature": return "bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400";
+      case "documentation": return "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400";
+      case "question": return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400";
+      case "enhancement": return "bg-purple-100 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400";
+      default: return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+    }
+  };
+
   const getClassificationColor = (classification?: string) => {
     switch (classification) {
       case "duplicate": return "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400";
@@ -49,28 +60,28 @@ export default function IssueTableView({ issues, onIssueClick }: IssueTableViewP
         <div className="overflow-x-auto">
           <table className="w-full table-fixed">
             <colgroup>
-              <col className="w-16" />
-              <col className="w-auto" />
               <col className="w-20" />
+              <col className="w-auto" />
+              <col className="w-24" />
               <col className="w-28" />
               <col className="w-28" />
               <col className="w-24" />
-              <col className="w-28" />
+              <col className="w-32" />
             </colgroup>
             <thead className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-800/50">
               {/* Column Headers */}
               <tr>
                 <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                  #
+                  Issue ID
                 </th>
                 <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                  Issue
+                  Description
                 </th>
                 <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                   State
                 </th>
                 <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                  Category
+                  Type
                 </th>
                 <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                   Criticality
@@ -79,7 +90,7 @@ export default function IssueTableView({ issues, onIssueClick }: IssueTableViewP
                   Similarity
                 </th>
                 <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                  Type
+                  Classification
                 </th>
               </tr>
             </thead>
@@ -113,9 +124,9 @@ export default function IssueTableView({ issues, onIssueClick }: IssueTableViewP
                     </span>
                   </td>
                   <td className="px-3 py-3">
-                    {issue.category ? (
-                      <span className={`text-xs font-medium capitalize ${getCategoryColor(issue.category)}`}>
-                        {issue.category}
+                    {issue.ai_analysis?.type ? (
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize ${getTypeColor(issue.ai_analysis.type)}`}>
+                        {issue.ai_analysis.type}
                       </span>
                     ) : (
                       <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>

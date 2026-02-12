@@ -19,8 +19,10 @@ class IssueCategori:
         "bug": {
             "keywords": [
                 "bug", "error", "issue", "problem", "broken", "crash", "fail",
-                "exception", "not working", "doesn't work", "incorrect", "wrong",
-                "unexpected", "regression", "defect", "fault"
+                "exception", "not working", "doesn't work", "does not work",
+                "incorrect", "wrong", "unexpected", "regression", "defect", "fault",
+                "throws", "stack trace", "null pointer", "undefined", "cannot",
+                "unable to", "won't", "will not", "stopped working"
             ],
             "weight": 1.0
         },
@@ -56,10 +58,11 @@ class IssueCategori:
         },
         "question": {
             "keywords": [
-                "question", "how to", "how do i", "help", "what is", "why",
-                "when", "where", "which", "clarification", "confused", "understand"
+                "question", "how to", "how do i", "how can i", "help needed",
+                "what is", "why does", "clarification", "confused", "understand",
+                "can someone", "anyone know", "is it possible"
             ],
-            "weight": 0.8
+            "weight": 0.7  # Reduced weight to avoid false positives
         },
         "dependency": {
             "keywords": [
@@ -88,8 +91,8 @@ class IssueCategori:
         # Compile regex patterns for efficiency
         self.compiled_patterns = {}
         for category, data in self.CATEGORY_PATTERNS.items():
-            # Create regex pattern that matches whole words
-            pattern = r'\b(' + '|'.join(re.escape(kw) for kw in data["keywords"]) + r')\b'
+            # Create regex pattern that matches word stems (allows crash->crashes, fail->fails, etc.)
+            pattern = r'\b(' + '|'.join(re.escape(kw) for kw in data["keywords"]) + r')'
             self.compiled_patterns[category] = {
                 "pattern": re.compile(pattern, re.IGNORECASE),
                 "weight": data["weight"]

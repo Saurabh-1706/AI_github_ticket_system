@@ -4,10 +4,12 @@ from pydantic import BaseModel
 router = APIRouter(tags=["Analysis"])
 
 
+from typing import Optional, Union
+
 class AnalysisRequest(BaseModel):
-    id: int
+    id: Union[int, str]  # Accept both int and str since GitHub IDs can be either
     title: str
-    body: str
+    body: Optional[str] = ""  # Make body optional with default empty string
     owner: str  # Repository owner
     repo: str   # Repository name
 

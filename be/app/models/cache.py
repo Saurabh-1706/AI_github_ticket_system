@@ -2,7 +2,7 @@
 Pydantic models for MongoDB cache collections
 """
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List, Any, Annotated
+from typing import Optional, List, Any, Annotated, Dict
 from datetime import datetime
 from bson import ObjectId
 from pydantic.functional_validators import BeforeValidator
@@ -37,7 +37,10 @@ class CachedRepository(BaseModel):
 
 class AIAnalysis(BaseModel):
     """AI analysis results for an issue"""
+    type: Optional[str] = None  # bug, feature, documentation, etc.
     criticality: str = "medium"  # low, medium, high
+    confidence: Optional[float] = None  # 0.0 to 1.0
+    similar_issues: List[Dict[str, Any]] = []  # List of similar issues
 
 
 class SimilarIssue(BaseModel):

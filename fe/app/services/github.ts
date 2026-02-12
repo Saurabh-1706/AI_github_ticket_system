@@ -111,12 +111,14 @@ export async function fetchAllIssues(
 /**
  * Analyze a single issue within repository context
  */
-export async function analyzeIssue(owner: string, repo: string, issue: any) {
+export async function analyzeIssue(owner: string, repo: string, issue: { id: number | string; title: string; body: string }) {
   const res = await fetch(`${API_BASE}/api/analysis/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      ...issue,
+      id: issue.id,
+      title: issue.title,
+      body: issue.body,
       owner,
       repo,
     }),

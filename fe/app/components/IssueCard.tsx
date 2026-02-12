@@ -13,6 +13,17 @@ export default function IssueCard({
 }: IssueCardProps) {
   const dup = issue?.duplicate_info ?? {};
 
+  const getTypeColor = (type?: string) => {
+    switch (type?.toLowerCase()) {
+      case "bug": return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+      case "feature": return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
+      case "documentation": return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
+      case "question": return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400";
+      case "enhancement": return "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400";
+      default: return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+    }
+  };
+
   const classificationStyle =
     dup.classification === "duplicate"
       ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
@@ -47,10 +58,27 @@ export default function IssueCard({
 
       {/* AI Metadata */}
       <div className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-        <Info label="Type" value={issue?.ai_analysis?.type ?? "unknown"} />
+        <div>
+          <p className="text-xs uppercase tracking-wide text-zinc-400">Type</p>
+          {issue?.ai_analysis?.type ? (
+            <span className={`mt-1 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize ${getTypeColor(issue.ai_analysis.type)}`}>
+              {issue.ai_analysis.type}
+            </span>
+          ) : (
+            <p className="mt-0.5 font-medium text-zinc-900 dark:text-zinc-100">unknown</p>
+          )}
+        </div>
         <Info
           label="Criticality"
           value={issue?.ai_analysis?.criticality ?? "unknown"}
+        />
+        <Info
+          label="Confidence"
+          value={
+            issue?.ai_analysis?.confidence !== undefined
+              ? `${Math.round(issue.ai_analysis.confidence * 100)}%`
+              : "N/A"
+          }
         />
         <Info
           label="Similarity"
@@ -60,7 +88,6 @@ export default function IssueCard({
               : "N/A"
           }
         />
-        <Info label="Reuse" value={dup.reuse_type ?? "—"} />
       </div>
 
       {/* 🔁 MULTIPLE SIMILAR ISSUES (THIS IS THE PART YOU ASKED ABOUT) */}

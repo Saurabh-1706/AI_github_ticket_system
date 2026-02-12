@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState, useMemo } from "react";
-import { fetchRepo, checkRepoAccess, getUserToken, analyzeIssue, fetchCachedIssues, syncRepository, type CacheIssuesParams } from "../services/github";
+import { fetchRepo, checkRepoAccess, getUserToken, fetchCachedIssues, syncRepository, type CacheIssuesParams } from "../services/github";
 import RepoCard from "../components/RepoCard";
 import IssueList from "../components/IssueList";
 import IssueTableView from "../components/IssueTableView";
@@ -267,25 +267,13 @@ export default function RepositoryPage() {
 
 
   const handleSelectIssue = async (issue: any) => {
-    setSelectedIssue(issue); // open panel immediately
-  
-    try {
-      const analysis = await analyzeIssue(owner!, repo!, issue);
-      
-      setSelectedIssue({
-        ...issue,
-        ai_analysis: {
-          type: analysis.type,
-          criticality: analysis.criticality,
-          confidence: analysis.confidence,
-          solution: analysis.solution,
-        },
-        duplicate_info: analysis.similar_issues?.[0] ?? null,
-        similar_issues: analysis.similar_issues ?? [],
-      });
-    } catch (e) {
-      console.error("Analysis failed", e);
-    }
+    // Just set the issue directly - it already has all the correct data from cache
+    // including ai_analysis with type, criticality, confidence, and similar_issues
+    setSelectedIssue({
+      ...issue,
+      // Ensure similar_issues is available at top level for IssueDetail component
+      similar_issues: issue.ai_analysis?.similar_issues ?? issue.similar_issues ?? []
+    });
   };
   
 

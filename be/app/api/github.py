@@ -36,7 +36,7 @@ def analyze_single_issue(owner, repo, issue):
         
         if count <= 1:  # Only current issue exists in this repo
             return {
-                "ai_analysis": {"type": "new", "criticality": "low", "confidence": 0, "similar_issues": []},
+                "ai_analysis": {"type": primary_category, "criticality": "low", "confidence": 0, "similar_issues": []},
                 "duplicate_info": {"classification": "new", "similarity": 0, "reuse_type": "minimal"}
             }
         
@@ -59,7 +59,36 @@ def analyze_single_issue(owner, repo, issue):
                     similarity = cosine_similarity(embedding, sim_embedding)
                     max_similarity = max(max_similarity, similarity)
         
-        issue_type = "bug" if "bug" in title.lower() else "feature" if "feature" in title.lower() else "task"
+        
+        # Extract similar issues from query results
+        similar_issues = []
+        if results["embeddings"] and len(results["embeddings"][0]) > 0:
+            for i in range(len(results["embeddings"][0])):
+                metadata = results["metadatas"][0][i]
+                
+                # Skip if this is the same issue (self-match)
+                if metadata.get("title") == title:
+                    continue
+                
+                sim_embedding = results["embeddings"][0][i]
+                if sim_embedding is not None:
+                    similarity = cosine_similarity(embedding, sim_embedding)
+                    
+                    # Only include issues with meaningful similarity (>= 50%)
+                    if similarity >= 0.5:
+                        similar_issues.append({
+                            "id": results["ids"][0][i],
+                            "number": metadata.get("number"),
+                            "title": metadata.get("title"),
+                            "similarity": round(similarity, 3)
+                        })
+        
+        # Sort by similarity (highest first) and take top 5
+        similar_issues.sort(key=lambda x: x["similarity"], reverse=True)
+        similar_issues = similar_issues[:5]
+        
+        # Use the categorizer result instead of simple keyword matching
+        issue_type = primary_category  # Already calculated from categorizer on line 30
         criticality = "high" if max_similarity >= 0.85 else "medium" if max_similarity >= 0.7 else "low"
         
         # Determine classification and reuse type
@@ -68,10 +97,10 @@ def analyze_single_issue(owner, repo, issue):
         
         return {
             "ai_analysis": {
-                "type": issue_type,
+                "type": issue_type,  # Now uses categorizer result (bug, feature, documentation, etc.)
                 "criticality": criticality,
                 "confidence": round(max_similarity, 2),
-                "similar_issues": []
+                "similar_issues": similar_issues  # Now populated with actual similar issues
             },
             "duplicate_info": {
                 "classification": classification,
@@ -79,7 +108,9 @@ def analyze_single_issue(owner, repo, issue):
                 "reuse_type": reuse_type
             }
         }
-    except:
+    except Exception as e:
+        print(f"❌ ERROR in analyze_single_issue: {str(e)}")
+        traceback.print_exc()
         return {
             "ai_analysis": {"type": "unknown", "criticality": "unknown", "confidence": 0, "similar_issues": []},
             "duplicate_info": {"classification": "unknown", "similarity": 0, "reuse_type": "minimal"}

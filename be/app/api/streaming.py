@@ -19,10 +19,16 @@ embedder = EmbeddingService()
 chroma = ChromaStore()
 
 
-def analyze_issue_inline(owner: str, repo: str, issue_data: dict):
+def analyze_issue_inline(owner: str, repo: str, issue_data: dict, primary_category: str = "general"):
     """
     Analyze a single issue for duplicates and similarity.
     Inline version to avoid circular imports.
+    
+    Args:
+        owner: Repository owner
+        repo: Repository name
+        issue_data: Issue data dict with id, title, body
+        primary_category: Categorized issue type from categorizer
     """
     issue_id = str(issue_data["id"])
     title = issue_data["title"]
@@ -32,15 +38,15 @@ def analyze_issue_inline(owner: str, repo: str, issue_data: dict):
     if not chroma.issue_exists(owner, repo, issue_id):
         return {
             "ai_analysis": {
-                "type": "unknown",
-                "criticality": "medium",
+                "type": primary_category,  # Use categorized type instead of "unknown"
+                "criticality": "low",
                 "confidence": 0.0,
                 "similar_issues": []
             },
             "duplicate_info": {
                 "classification": "new",
                 "similarity": 0.0,
-                "reuse_type": "none"
+                "reuse_type": "minimal"
             }
         }
     
@@ -69,18 +75,21 @@ def analyze_issue_inline(owner: str, repo: str, issue_data: dict):
     # Classify based on similarity
     if max_similarity > 0.85:
         classification = "duplicate"
-        reuse_type = "exact"
+        reuse_type = "direct"
+        criticality = "high"
     elif max_similarity > 0.7:
         classification = "related"
-        reuse_type = "partial"
+        reuse_type = "adapt"
+        criticality = "medium"
     else:
         classification = "new"
-        reuse_type = "none"
+        reuse_type = "minimal"
+        criticality = "low"
     
     return {
         "ai_analysis": {
-            "type": "issue",
-            "criticality": "medium",
+            "type": primary_category,  # Use categorized type instead of hardcoded "issue"
+            "criticality": criticality,
             "confidence": round(max_similarity, 3),
             "similar_issues": similar_issues[:3]
         },
@@ -162,7 +171,7 @@ async def stream_issues(owner: str, repo: str, user_token: str = None, page: int
                     "id": issue["id"],
                     "title": title,
                     "body": body
-                })
+                }, primary_category)  # Pass the categorized type
 
                 # Send the issue immediately
                 issue_data = {
