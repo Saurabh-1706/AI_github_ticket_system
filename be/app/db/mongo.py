@@ -18,6 +18,8 @@ async_db = async_client["git_intellisolve"]
 # ✅ Cache collections for MongoDB-backed issue caching (async)
 cached_repositories = async_db["cached_repositories"]
 cached_issues = async_db["cached_issues"]
+# ✅ Collection for GPT-generated solutions
+solutions = async_db["solutions"]
 
 
 def get_database():

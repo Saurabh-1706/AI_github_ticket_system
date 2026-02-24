@@ -309,3 +309,55 @@ export async function deleteRepository(owner: string, repo: string): Promise<voi
 
   return res.json();
 }
+
+// ─────────────────────────────────────────────────────────────
+// Solution Generation
+// ─────────────────────────────────────────────────────────────
+
+export interface GeneratedSolution {
+  issue_id: string;
+  summary: string;
+  is_code_fix: boolean;
+  steps: string[];
+  code: string;
+  code_language: string;
+  code_explanation: string;
+  generated_by: string;
+  owner: string;
+  repo: string;
+  issue_title: string;
+  created_at: string;
+}
+
+/**
+ * Generate (or retrieve cached) AI solution for a GitHub issue.
+ * Calls POST /api/solution/generate.
+ */
+export async function generateSolution(
+  issueId: string,
+  title: string,
+  body: string,
+  owner: string,
+  repo: string
+): Promise<{ cached: boolean; solution: GeneratedSolution }> {
+  const res = await fetch(`${API_BASE}/api/solution/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      issue_id: issueId,
+      title,
+      body,
+      owner,
+      repo,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error("Solution generation failed:", res.status, text);
+    throw new Error("Failed to generate solution. Please try again.");
+  }
+
+  return res.json();
+}
+

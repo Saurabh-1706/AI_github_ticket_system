@@ -6,6 +6,7 @@ chromadb==0.4.22
 sentence-transformers==2.2.2
 numpy
 pymongo
+motor
 pydantic
 pydantic-settings
 PyJWT
@@ -13,3 +14,4 @@ requests
 passlib[bcrypt]
 python-jose[cryptography]
 bcrypt
+openai

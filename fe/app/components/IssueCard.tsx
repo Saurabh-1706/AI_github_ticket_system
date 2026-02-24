@@ -57,7 +57,7 @@ export default function IssueCard({
       )}
 
       {/* AI Metadata */}
-      <div className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
+      <div className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
         <div>
           <p className="text-xs uppercase tracking-wide text-zinc-400">Type</p>
           {issue?.ai_analysis?.type ? (
@@ -71,14 +71,6 @@ export default function IssueCard({
         <Info
           label="Criticality"
           value={issue?.ai_analysis?.criticality ?? "unknown"}
-        />
-        <Info
-          label="Confidence"
-          value={
-            issue?.ai_analysis?.confidence !== undefined
-              ? `${Math.round(issue.ai_analysis.confidence * 100)}%`
-              : "N/A"
-          }
         />
         <Info
           label="Similarity"

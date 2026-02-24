@@ -275,27 +275,28 @@ class CacheService:
     
     async def _analyze_issue(self, owner: str, repo: str, issue_data: Dict[str, Any]) -> Dict[str, Any]:
         """Perform AI analysis with ChromaDB semantic similarity"""
+        title = issue_data["title"]
+        body = issue_data.get("body", "")
+
+        # ── STEP 1: Categorize (pure Python — never fails silently) ────────
+        try:
+            from app.ai.categorizer import categorizer
+            category_info = categorizer.categorize(title, body)
+            issue_type = category_info["primary_category"]
+            category = issue_type
+        except Exception as e:
+            logger.error(f"Categorizer failed for issue #{issue_data.get('number')}: {e}")
+            issue_type = "general"
+            category = "general"
+
+        # ── STEP 2: Embedding + ChromaDB similarity (graceful fallback) ────
+        similar_issues = []
+        max_similarity = 0.0
         try:
             from app.core.embedder import embedder
             from app.core.chroma_manager import chroma_manager
-            from app.ai.categorizer import categorizer
-            
-            title = issue_data["title"]
-            body = issue_data.get("body", "")
-            
-            # Use categorizer to determine issue type (SAME AS github.py)
-            category_info = categorizer.categorize(title, body)
-            primary_category = category_info["primary_category"]
-            issue_type = primary_category  # Use categorizer result directly
-            category = issue_type  # For backward compatibility
-            
-            # Generate embedding for this issue
-            embedding = embedder.embed_issue(
-                issue_data["title"],
-                issue_data.get("body", "")
-            )
-            
-            # Find similar issues using ChromaDB
+
+            embedding = embedder.embed_issue(title, body)
             repo_name = f"{owner}/{repo}"
             similar_issues = chroma_manager.find_similar_issues(
                 repo_name=repo_name,
@@ -303,52 +304,36 @@ class CacheService:
                 top_k=3,
                 exclude_issue=issue_data["number"]
             )
-            
-            # Determine max similarity and classification
-            max_similarity = 0.0
             if similar_issues:
                 max_similarity = max(issue['similarity'] for issue in similar_issues)
-            
-            # Criticality based on similarity score (SAME AS github.py line 92)
-            criticality = "high" if max_similarity >= 0.85 else "medium" if max_similarity >= 0.7 else "low"
-            
-            # Determine classification based on max similarity
-            if max_similarity >= 0.85:
-                classification = "duplicate"
-            elif max_similarity >= 0.6:
-                classification = "related"
-            else:
-                classification = "new"
-            
-            duplicate_info = {
+        except Exception as e:
+            logger.warning(f"Similarity search failed for issue #{issue_data.get('number')}: {e} — using defaults")
+
+        # ── STEP 3: Build result ────────────────────────────────────────────
+        criticality = "high" if max_similarity >= 0.85 else "medium" if max_similarity >= 0.7 else "low"
+
+        if max_similarity >= 0.85:
+            classification = "duplicate"
+        elif max_similarity >= 0.6:
+            classification = "related"
+        else:
+            classification = "new"
+
+        return {
+            "category": category,
+            "ai_analysis": {
+                "type": issue_type,
+                "criticality": criticality,
+                "confidence": round(max_similarity, 2),
+                "similar_issues": similar_issues
+            },
+            "duplicate_info": {
                 "classification": classification,
                 "similarity": round(max_similarity, 3),
                 "similar_issues": similar_issues
             }
-            
-            return {
-                "category": category,
-                "ai_analysis": {
-                    "type": issue_type,  # From categorizer (bug, feature, documentation, etc.)
-                    "criticality": criticality,  # Based on similarity score
-                    "confidence": round(max_similarity, 2),  # Similarity as confidence
-                    "similar_issues": similar_issues
-                },
-                "duplicate_info": duplicate_info
-            }
-            
-        except Exception as e:
-            logger.error(f"AI analysis failed: {e}", exc_info=True)
-            return {
-                "category": "unknown",
-                "ai_analysis": {
-                    "type": "unknown",
-                    "criticality": "medium",
-                    "confidence": 0.0,
-                    "similar_issues": []
-                },
-                "duplicate_info": {"classification": "new", "similarity": 0, "similar_issues": []}
-            }
+        }
+
     
     def _is_cache_fresh(self, last_synced: Optional[datetime]) -> bool:
         """Check if cache is fresh (synced within last hour)"""
