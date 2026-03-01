@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "./AuthProvider";
 
 export default function Sidebar() {
@@ -10,11 +10,22 @@ export default function Sidebar() {
   const { isAuthenticated } = useAuth();
   const [isCollapsed, setIsCollapsed] = useState(false);
 
+  const [lastRepoHref, setLastRepoHref] = useState("/repository");
+
+  useEffect(() => {
+    const stored = localStorage.getItem("lastRepo");
+    if (stored) {
+      const { owner, repo } = JSON.parse(stored);
+      setLastRepoHref(`/repository?owner=${owner}&repo=${repo}`);
+    }
+  }, []);
+
   const navItems = [
     { href: "/", label: "Home", icon: "🏠" },
-    { href: "/repository", label: "Analyze Repo", icon: "🔍" },
+    { href: lastRepoHref, label: "Analyze Repo", icon: "🔍" },
     ...(isAuthenticated ? [
-      { href: "/repositories", label: "My Repositories", icon: "📊" },
+      { href: "/repositories", label: "My Repositories", icon: "🗂️" },
+      { href: "/dashboard", label: "Multi-Repo Analysis", icon: "🌐" },
     ] : []),
   ];
 

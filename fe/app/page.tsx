@@ -6,35 +6,9 @@ import Link from "next/link";
 import { useAuth } from "./components/AuthProvider";
 import UserMenu from "./components/UserMenu";
 import RepoInput from "./components/RepoInput";
-import { fetchSavedRepos } from "./services/github";
-
-interface SavedRepo {
-  owner: string;
-  repo: string;
-  full_name: string;
-  stars: number;
-  language: string;
-  description?: string;
-}
 
 export default function Home() {
-  const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
-  const [savedRepos, setSavedRepos] = useState<SavedRepo[]>([]);
-
-  useEffect(() => {
-    const loadRepos = async () => {
-      try {
-        const token = localStorage.getItem("auth_token");
-        const repos = await fetchSavedRepos(token || undefined);
-        setSavedRepos(repos);
-      } catch (error) {
-        console.error("Failed to fetch saved repos:", error);
-      }
-    };
-    
-    loadRepos();
-  }, [isAuthenticated]);
 
   return (
     <div className="min-h-screen">
@@ -99,66 +73,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Previously Analyzed Repositories */}
-        {savedRepos.length > 0 && (
-          <div>
-            <div className="mb-6 flex items-center justify-between">
-              <div>
-                <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">
-                  Previously Analyzed Repositories
-                </h2>
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  {isAuthenticated ? "Your analyzed repositories" : "Recently analyzed"}
-                </p>
-              </div>
-            </div>
-
-            {/* Repository Grid */}
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {savedRepos.map((repo) => (
-                <Link
-                  key={repo.full_name}
-                  href={`/repository?owner=${repo.owner}&repo=${repo.repo}`}
-                  className="group rounded-xl border border-zinc-200 bg-white p-6 shadow-sm transition-all hover:shadow-lg dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
-                >
-                  <div className="mb-3 flex items-start justify-between">
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-zinc-900 group-hover:text-blue-600 dark:text-white dark:group-hover:text-blue-400">
-                        {repo.repo}
-                      </h3>
-                      <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                        {repo.owner}
-                      </p>
-                    </div>
-                  </div>
-
-                  {repo.description && (
-                    <p className="mb-4 line-clamp-2 text-sm text-zinc-600 dark:text-zinc-400">
-                      {repo.description}
-                    </p>
-                  )}
-
-                  <div className="flex items-center gap-4 text-sm text-zinc-500 dark:text-zinc-400">
-                    {repo.language && (
-                      <div className="flex items-center gap-1">
-                        <span className="h-3 w-3 rounded-full bg-blue-500"></span>
-                        <span>{repo.language}</span>
-                      </div>
-                    )}
-                    <div className="flex items-center gap-1">
-                      <span>⭐</span>
-                      <span>{repo.stars?.toLocaleString() || 0}</span>
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </div>
-        )}
-
-        
-
-        {/* Recently Analyzed Repositories */}
+        {/* My Repositories — user-scoped via cached_repositories */}
         <RecentlyAnalyzedRepos />
 
       </div>
@@ -176,7 +91,8 @@ function RecentlyAnalyzedRepos() {
     const loadRepos = async () => {
       try {
         const { fetchRepositories } = await import("./services/github");
-        const repos = await fetchRepositories();
+        const authToken = typeof window !== "undefined" ? localStorage.getItem("auth_token") ?? undefined : undefined;
+        const repos = await fetchRepositories(authToken);
         // Get latest 3
         setRepositories(repos.slice(0, 3));
       } catch (error) {

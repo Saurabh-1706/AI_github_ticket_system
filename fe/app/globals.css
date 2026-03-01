@@ -5,22 +5,27 @@
 
 /* Hide scrollbar but keep scrolling */
 .no-scrollbar {
-    scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none; /* IE & Edge */
-  }
-  
-.no-scrollbar::-webkit-scrollbar {
-    display: none; /* Chrome, Safari */
-  }
-  
-
-html, body {
-    scrollbar-width: none;
-    -ms-overflow-style: none;
+  scrollbar-width: none;
+  /* Firefox */
+  -ms-overflow-style: none;
+  /* IE & Edge */
 }
-  
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+  /* Chrome, Safari */
+}
+
+
+html,
+body {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  font-size: 16px;
+  /* Base font size */
+}
+
 html::-webkit-scrollbar,
 body::-webkit-scrollbar {
-    display: none;
+  display: none;
 }
-  

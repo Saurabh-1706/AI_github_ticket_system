@@ -20,6 +20,9 @@ cached_repositories = async_db["cached_repositories"]
 cached_issues = async_db["cached_issues"]
 # ✅ Collection for GPT-generated solutions
 solutions = async_db["solutions"]
+# ✅ Tracks which repos have been source-code indexed (and last commit SHA)
+code_file_index = async_db["code_file_index"]
+
 
 
 def get_database():

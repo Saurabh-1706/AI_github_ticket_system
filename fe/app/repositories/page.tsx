@@ -18,7 +18,8 @@ export default function RepositoriesPage() {
     try {
       setLoading(true);
       setError(null);
-      const repos = await fetchRepositories();
+      const authToken = typeof window !== "undefined" ? localStorage.getItem("auth_token") ?? undefined : undefined;
+      const repos = await fetchRepositories(authToken);
       // Filter out invalid repositories (null or undefined names)
       const validRepos = repos.filter(r => r.name && r.name !== "null" && r.name !== "None");
       setRepositories(validRepos);

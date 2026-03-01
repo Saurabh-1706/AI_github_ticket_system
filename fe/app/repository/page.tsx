@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState, useMemo } from "react";
-import { fetchRepo, checkRepoAccess, getUserToken, fetchCachedIssues, syncRepository, type CacheIssuesParams } from "../services/github";
+import { fetchRepo, checkRepoAccess, getUserToken, fetchCachedIssues, syncRepository, streamIssues, type CacheIssuesParams } from "../services/github";
 import RepoCard from "../components/RepoCard";
 import IssueList from "../components/IssueList";
 import IssueTableView from "../components/IssueTableView";
@@ -14,6 +14,9 @@ import ViewToggle from "../components/ViewToggle";
 import CardFilter, { type CardFilters } from "../components/CardFilter";
 import ItemsPerPageSelector from "../components/ItemsPerPageSelector";
 import type { Issue } from "../types";
+import SearchModal from "../components/SearchModal";
+import ReleaseNotesModal from "../components/ReleaseNotesModal";
+import RiskReportModal from "../components/RiskReportModal";
 
 export default function RepositoryPage() {
   const params = useSearchParams();
@@ -46,12 +49,18 @@ export default function RepositoryPage() {
   
   // Cache info state
   const [cacheInfo, setCacheInfo] = useState<any>(null);
-  
+  const [backgroundSyncing, setBackgroundSyncing] = useState(false);
+  const [syncedNewCount, setSyncedNewCount] = useState<number | null>(null);
+
   // OAuth and private repo state
   const [isPrivate, setIsPrivate] = useState(false);
   const [requiresAuth, setRequiresAuth] = useState(false);
   const [userToken, setUserToken] = useState<string | null>(null);
   const [githubUsername, setGithubUsername] = useState<string | null>(null);
+
+  // Streaming state (used on first visit when cache is empty)
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamedTotal, setStreamedTotal] = useState(0);
 
   useEffect(() => {
     // Check for OAuth callback
@@ -70,6 +79,9 @@ export default function RepositoryPage() {
 
   useEffect(() => {
     if (!owner || !repo) return;
+
+    // Persist last visited repo so the Analyze Repo sidebar link can restore it
+    localStorage.setItem("lastRepo", JSON.stringify({ owner, repo }));
 
     const loadData = async () => {
       try {
@@ -156,21 +168,78 @@ export default function RepositoryPage() {
           };
           
           const issuesRes = await fetchCachedIssues(cacheParams);
-          setIssues(issuesRes.issues);
-          setTotalIssues(issuesRes.pagination.total);
-          setTotalPages(issuesRes.pagination.total_pages);
-          setCacheInfo(issuesRes.cache_info);
-          setLoading(false);
-          
-          // Background sync to get latest issues
-          if (!issuesRes.cache_info.is_fresh) {
-            console.log("🔄 Cache is stale, syncing in background...");
-            syncRepository(owner, repo, false, userToken || undefined)
-              .then(() => {
-                console.log("✅ Background sync complete");
-                // Optionally refresh data after sync
-              })
-              .catch(err => console.error("❌ Background sync failed:", err));
+
+          if (issuesRes.pagination.total === 0) {
+            // ── First visit: no cache yet ──────────────────────────────────────
+            // Stream issues directly from GitHub so the user sees them instantly.
+            // The backend kicks off background AI-analysis + DB store after streaming.
+            console.log("📡 No cache yet — streaming issues from GitHub");
+            setLoading(false);
+            setIsStreaming(true);
+            setStreamedTotal(0);
+            setIssues([]);
+
+            streamIssues(
+              owner, repo, userToken || undefined,
+              (issue) => {
+                setIssues(prev => {
+                  // Only keep up to itemsPerPage issues in view (first page)
+                  if (prev.length >= itemsPerPage) return prev;
+                  return [...prev, issue as Issue];
+                });
+                setTotalIssues(prev => prev + 1);
+              },
+              (fetched) => setStreamedTotal(fetched),
+              (total) => {
+                setStreamedTotal(total);
+                setIsStreaming(false);
+                setTotalPages(Math.ceil(total / itemsPerPage));
+              },
+              (err) => {
+                console.error("Stream error:", err);
+                setIsStreaming(false);
+                setError("Failed to load issues: " + err);
+              },
+            );
+          } else {
+            // ── Returning visit: serve from fast DB cache ──────────────────────
+            setIssues(issuesRes.issues);
+            setTotalIssues(issuesRes.pagination.total);
+            setTotalPages(issuesRes.pagination.total_pages);
+            setCacheInfo(issuesRes.cache_info);
+            setLoading(false);
+
+            // Background sync if stale
+            if (!issuesRes.cache_info.is_fresh) {
+              console.log("🔄 Cache is stale, syncing in background...");
+              setBackgroundSyncing(true);
+              setSyncedNewCount(null);
+              const prevTotal = issuesRes.pagination.total;
+              syncRepository(owner, repo, false, userToken || undefined, localStorage.getItem('auth_token') || undefined)
+                .then(async () => {
+                  console.log("✅ Background sync complete — refreshing issues");
+                  const freshRes = await fetchCachedIssues({
+                    owner, repo,
+                    page: currentPage,
+                    per_page: itemsPerPage,
+                    state: cardFilters.state || undefined,
+                    category: cardFilters.category || undefined,
+                    type: cardFilters.type || undefined,
+                    criticality: cardFilters.criticality || undefined,
+                    min_similarity: cardFilters.minSimilarity > 0 ? cardFilters.minSimilarity : undefined,
+                    user_token: userToken || undefined,
+                  });
+                  setIssues(freshRes.issues);
+                  setTotalIssues(freshRes.pagination.total);
+                  setTotalPages(freshRes.pagination.total_pages);
+                  setCacheInfo(freshRes.cache_info);
+                  const diff = freshRes.pagination.total - prevTotal;
+                  if (diff > 0) setSyncedNewCount(diff);
+                  setTimeout(() => setSyncedNewCount(null), 4000);
+                })
+                .catch(err => console.error("❌ Background sync failed:", err))
+                .finally(() => setBackgroundSyncing(false));
+            }
           }
         } else {
           console.log("🔒 Private repo requires OAuth authorization");
@@ -186,9 +255,8 @@ export default function RepositoryPage() {
     loadData();
   }, [owner, repo, userToken, githubUsername, currentPage, itemsPerPage, cardFilters]);
 
-  useEffect(() => {
-    console.log("selectedIssue =", selectedIssue);
-  }, [selectedIssue]);
+
+
 
   // Reset to page 1 when filters change
   useEffect(() => {
@@ -291,6 +359,38 @@ export default function RepositoryPage() {
 
             <div className="mb-6 space-y-4 px-4">
               <RepoCard repo={repoData} />
+
+              {/* ── First-visit streaming indicator ── */}
+              {isStreaming && (
+                <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-2.5 text-xs text-violet-700 dark:border-violet-800 dark:bg-violet-900/20 dark:text-violet-300">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 12 0 12 0v4a8 8 0 00-8 8H0z" />
+                    </svg>
+                    <span>Streaming {streamedTotal.toLocaleString()} issues from GitHub… (AI analysis running in background)</span>
+                  </div>
+                  <div className="w-full h-1 bg-violet-100 dark:bg-violet-800 rounded-full overflow-hidden">
+                    <div className="h-1 bg-violet-500 rounded-full animate-pulse" style={{ width: "100%" }} />
+                  </div>
+                </div>
+              )}
+
+              {/* ── Background sync indicator ── */}
+              {backgroundSyncing && (
+                <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
+                  <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 12 0 12 0v4a8 8 0 00-8 8H0z" />
+                  </svg>
+                  Syncing latest issues in background…
+                </div>
+              )}
+              {syncedNewCount !== null && syncedNewCount > 0 && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300">
+                  ✅ {syncedNewCount} new issue{syncedNewCount > 1 ? "s" : ""} loaded from latest sync
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <span className="text-sm text-zinc-600 dark:text-zinc-400">
@@ -299,6 +399,13 @@ export default function RepositoryPage() {
                   <ItemsPerPageSelector value={itemsPerPage} onChange={setItemsPerPage} />
                 </div>
                 <div className="flex gap-2">
+                  <SearchModal defaultOwner={owner ?? undefined} defaultRepo={repo ?? undefined} />
+                  <ReleaseNotesModal
+                    owner={owner ?? ""}
+                    repo={repo ?? ""}
+                    userToken={userToken ?? undefined}
+                  />
+                  <RiskReportModal owner={owner ?? ""} repo={repo ?? ""} />
                   <CardFilter filters={cardFilters} onFilterChange={setCardFilters} />
                   <ViewToggle view={view} onViewChange={setView} />
                 </div>

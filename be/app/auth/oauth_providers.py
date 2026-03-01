@@ -52,7 +52,7 @@ class OAuthProviders:
         params = {
             "client_id": self.github_client_id,
             "redirect_uri": self.github_redirect_uri,
-            "scope": "user:email",
+            "scope": "public_repo user:email",  # public_repo needed for posting comments
             "state": state
         }
         

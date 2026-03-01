@@ -1,239 +1,150 @@
 """
 Streaming API endpoint for progressive issue loading.
+Issues are streamed directly from GitHub as they arrive — no blocking analysis.
+AI analysis + MongoDB storage runs in the background via cache_service.
 """
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 import json
 import asyncio
-from app.utils.github_fetcher import github_fetcher
-from app.ai.categorizer import IssueCategori
-from app.vector.embeddings import EmbeddingService
-from app.vector.chroma_client import ChromaStore
+import os
+import requests as http_requests
 
 router = APIRouter()
 
-# Initialize services
-categorizer = IssueCategori()
-embedder = EmbeddingService()
-chroma = ChromaStore()
 
+async def _stream_issues_from_github(owner: str, repo: str, user_token: str | None):
+    """
+    Async generator: yields raw issues from GitHub page by page.
+    Each yield is a newline-delimited JSON string.
+    """
+    token = user_token or os.getenv("GITHUB_TOKEN", "")
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    if token:
+        headers["Authorization"] = f"token {token}"
 
-def analyze_issue_inline(owner: str, repo: str, issue_data: dict, primary_category: str = "general"):
-    """
-    Analyze a single issue for duplicates and similarity.
-    Inline version to avoid circular imports.
-    
-    Args:
-        owner: Repository owner
-        repo: Repository name
-        issue_data: Issue data dict with id, title, body
-        primary_category: Categorized issue type from categorizer
-    """
-    issue_id = str(issue_data["id"])
-    title = issue_data["title"]
-    body = issue_data["body"]
-    
-    # Check if issue exists in ChromaDB
-    if not chroma.issue_exists(owner, repo, issue_id):
-        return {
-            "ai_analysis": {
-                "type": primary_category,  # Use categorized type instead of "unknown"
-                "criticality": "low",
-                "confidence": 0.0,
-                "similar_issues": []
-            },
-            "duplicate_info": {
-                "classification": "new",
-                "similarity": 0.0,
-                "reuse_type": "minimal"
-            }
-        }
-    
-    # Query for similar issues
-    query_embedding = embedder.embed_text(f"{title}\n{body}")
-    results = chroma.query(owner, repo, query_embedding, top_k=5)
-    
-    similar_issues = []
-    max_similarity = 0.0
-    
-    if results and len(results["ids"]) > 0:
-        for i, result_id in enumerate(results["ids"][0]):
-            if result_id == issue_id:
-                continue
-            
-            similarity = 1 - results["distances"][0][i]
-            max_similarity = max(max_similarity, similarity)
-            
-            metadata = results["metadatas"][0][i]
-            similar_issues.append({
-                "number": metadata.get("number"),
-                "title": metadata.get("title"),
-                "similarity": round(similarity, 3)
-            })
-    
-    # Classify based on similarity
-    if max_similarity > 0.85:
-        classification = "duplicate"
-        reuse_type = "direct"
-        criticality = "high"
-    elif max_similarity > 0.7:
-        classification = "related"
-        reuse_type = "adapt"
-        criticality = "medium"
-    else:
-        classification = "new"
-        reuse_type = "minimal"
-        criticality = "low"
-    
-    return {
-        "ai_analysis": {
-            "type": primary_category,  # Use categorized type instead of hardcoded "issue"
-            "criticality": criticality,
-            "confidence": round(max_similarity, 3),
-            "similar_issues": similar_issues[:3]
-        },
-        "duplicate_info": {
-            "classification": classification,
-            "similarity": round(max_similarity, 3),
-            "reuse_type": reuse_type
-        }
-    }
+    base_url = f"https://api.github.com/repos/{owner}/{repo}/issues"
 
+    # ── metadata frame ───────────────────────────────────────────────────────
+    yield json.dumps({"type": "start"}) + "\n"
 
-async def stream_issues(owner: str, repo: str, user_token: str = None, page: int = 1, per_page: int = 30):
-    """
-    Stream issues as they are fetched and processed from GitHub.
-    Yields JSON objects for each issue as it's ready.
-    """
-    try:
-        current_github_page = page
-        total_items_fetched = 0
-        pages_fetched = 0
-        issues_sent = 0
-        has_more = True
-        
-        # Send initial metadata
-        yield json.dumps({
-            "type": "start",
-            "page": page,
-            "per_page": per_page
-        }) + "\n"
-        
-        # Keep fetching until we have enough issues or run out of pages
-        while issues_sent < per_page and has_more:
-            result = github_fetcher.get_issues(owner, repo, user_token, current_github_page, per_page)
-            issues = result["issues"]
-            pagination_info = result["pagination"]
-            
-            if not issues:
-                has_more = False
+    page = 1
+    total_sent = 0
+
+    while True:
+        params = {"state": "all", "per_page": 100, "page": page,
+                  "sort": "updated", "direction": "desc"}
+
+        try:
+            resp = http_requests.get(base_url, headers=headers, params=params, timeout=30)
+
+            if resp.status_code == 403:
+                yield json.dumps({"type": "error", "error": "GitHub rate limit hit"}) + "\n"
                 break
-            
-            total_items_fetched += len(issues)
-            pages_fetched += 1
-            
-            for issue in issues:
-                if "pull_request" in issue:
-                    continue  # Skip pull requests
 
-                title = issue.get("title", "")
-                body = issue.get("body", "") or ""
-                issue_id = str(issue["id"])
+            resp.raise_for_status()
+            raw_issues = resp.json()
 
-                # Categorize the issue
-                category_info = categorizer.categorize(title, body)
-                primary_category = category_info["primary_category"]
-                categories = category_info["categories"]
-                confidence = category_info["confidence"]
+        except Exception as exc:
+            yield json.dumps({"type": "error", "error": str(exc)}) + "\n"
+            break
 
-                # Store in ChromaDB if not exists
-                if not chroma.issue_exists(owner, repo, issue_id):
-                    embedding = embedder.embed_issue_with_category(title, body, primary_category)
-                    chroma.add_issue(
-                        owner=owner,
-                        repo=repo,
-                        issue_id=issue_id,
-                        embedding=embedding,
-                        metadata={
-                            "number": issue["number"],
-                            "title": title,
-                            "body": body,
-                            "repo": f"{owner}/{repo}",
-                            "category": primary_category,
-                            "categories": ",".join(categories),
-                            "category_confidence": confidence,
-                        },
-                    )
+        if not raw_issues:
+            break
 
-                # Analyze each issue
-                analysis_result = analyze_issue_inline(owner, repo, {
-                    "id": issue["id"],
-                    "title": title,
-                    "body": body
-                }, primary_category)  # Pass the categorized type
+        has_more = len(raw_issues) >= 100
 
-                # Send the issue immediately
-                issue_data = {
-                    "type": "issue",
-                    "data": {
-                        "id": issue["id"],
-                        "number": issue["number"],
-                        "title": title,
-                        "body": body,
-                        "state": issue["state"],
-                        "created_at": issue["created_at"],
-                        "updated_at": issue["updated_at"],
-                        "labels": [l["name"] for l in issue.get("labels", [])],
-                        "category": primary_category,
-                        "ai_analysis": analysis_result["ai_analysis"],
-                        "duplicate_info": analysis_result["duplicate_info"]
-                    }
+        for issue in raw_issues:
+            if "pull_request" in issue:
+                continue  # skip PRs
+
+            # Minimal categorization (fast, pure Python — no embeddings)
+            try:
+                from app.ai.categorizer import categorizer as _cat
+                cat_info = _cat.categorize(issue.get("title", ""), issue.get("body", "") or "")
+                category = cat_info.get("primary_category", "general")
+            except Exception:
+                category = "general"
+
+            yield json.dumps({
+                "type": "issue",
+                "data": {
+                    "number":     issue["number"],
+                    "title":      issue.get("title", ""),
+                    "body":       issue.get("body", "") or "",
+                    "state":      issue["state"],
+                    "created_at": issue.get("created_at", ""),
+                    "updated_at": issue.get("updated_at", ""),
+                    "labels":     [lb["name"] for lb in issue.get("labels", [])],
+                    "user":       issue.get("user") or {},
+                    "category":   category,
+                    # Placeholder AI fields — filled in once background sync completes
+                    "ai_analysis": {
+                        "type":          category,
+                        "criticality":   "low",
+                        "confidence":    0,
+                        "similar_issues": [],
+                    },
+                    "duplicate_info": {
+                        "classification": "new",
+                        "similarity":     0,
+                    },
                 }
-                
-                yield json.dumps(issue_data) + "\n"
-                issues_sent += 1
-                
-                # Stop if we have enough issues
-                if issues_sent >= per_page:
-                    break
-            
-            # Check if there are more pages
-            has_more = pagination_info.get("has_next", False)
-            current_github_page += 1
-            
-            # Small delay to prevent overwhelming the client
-            await asyncio.sleep(0.01)
-        
-        # Send completion metadata
-        has_next_page = has_more or issues_sent == per_page
-        
-        yield json.dumps({
-            "type": "complete",
-            "pagination": {
-                "page": page,
-                "per_page": per_page,
-                "has_next": has_next_page,
-                "has_prev": page > 1,
-                "count": issues_sent,
-                "total_fetched": total_items_fetched,
-                "pages_fetched": pages_fetched
-            }
-        }) + "\n"
-        
-    except Exception as e:
-        yield json.dumps({
-            "type": "error",
-            "error": str(e)
-        }) + "\n"
+            }) + "\n"
+            total_sent += 1
+
+        yield json.dumps({"type": "progress", "fetched": total_sent, "page": page}) + "\n"
+
+        # Let the event loop breathe
+        await asyncio.sleep(0)
+
+        if not has_more:
+            break
+        page += 1
+
+    yield json.dumps({"type": "complete", "total": total_sent}) + "\n"
 
 
 @router.get("/issues/{owner}/{repo}/stream")
-async def stream_issues_endpoint(owner: str, repo: str, user_token: str = None, page: int = 1, per_page: int = 30):
+async def stream_issues_endpoint(
+    owner: str,
+    repo: str,
+    user_token: str = None,
+):
     """
-    Stream issues progressively as they are fetched from GitHub.
+    Stream issues from GitHub directly to the browser as NDJSON.
+    Each line is a JSON object with type: 'start' | 'issue' | 'progress' | 'complete' | 'error'.
+
+    After all issues are streamed, background sync (AI analysis + MongoDB) is kicked off
+    automatically so subsequent page loads serve from the fast DB cache.
     """
-    return StreamingResponse(
-        stream_issues(owner, repo, user_token, page, per_page),
-        media_type="application/x-ndjson"
-    )
+
+    async def generate():
+        all_issues = []
+
+        async for chunk in _stream_issues_from_github(owner, repo, user_token):
+            yield chunk
+            # Collect issue data so we can trigger background sync after streaming
+            try:
+                msg = json.loads(chunk)
+                if msg.get("type") == "issue":
+                    all_issues.append(msg["data"]["number"])
+            except Exception:
+                pass
+
+        # Kick off background DB sync (non-blocking)
+        asyncio.create_task(_background_sync(owner, repo, user_token))
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+async def _background_sync(owner: str, repo: str, user_token: str | None):
+    """Background task: run full sync_repository so DB is populated for next visit."""
+    try:
+        from app.services.cache_service import CacheService
+        svc = CacheService()
+        await svc.sync_repository(owner, repo, force_full_sync=False, user_token=user_token)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(f"Background sync failed for {owner}/{repo}: {exc}")

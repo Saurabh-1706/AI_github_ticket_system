@@ -45,6 +45,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.log("🔄 Verifying token with backend...");
           const freshUserData = await getCurrentUser(token);
           console.log("✅ Token valid, user data refreshed");
+          // Persist fresh data (includes avatar_url) back to localStorage
+          const { storeUserData } = await import("../services/auth");
+          storeUserData(freshUserData);
           setUser(freshUserData);
         } catch (err) {
           // Token expired or invalid

@@ -197,6 +197,39 @@ def github_callback(code: str, state: str):
             user_info=user_info
         )
         
+        # Save GitHub token for write operations (posting comments, closing issues, etc.)
+        from app.db.mongo import db as _db
+        from bson import ObjectId
+        import datetime as _dt
+        _now = _dt.datetime.utcnow()
+        # 1) Save to user_tokens keyed by user_id + github_username
+        _db["user_tokens"].update_one(
+            {"github_username": user_info["login"]},
+            {"$set": {
+                "github_username": user_info["login"],
+                "github_user_id": str(user_info["id"]),
+                "user_id": user.id,
+                "access_token": access_token,
+                "updated_at": _now,
+            }, "$setOnInsert": {"created_at": _now}},
+            upsert=True
+        )
+        # 2) Also store on user's oauth_providers sub-document for direct lookup
+        try:
+            _db["users"].update_one(
+                {
+                    "_id": ObjectId(user.id),
+                    "oauth_providers.provider": "github",
+                    "oauth_providers.provider_user_id": str(user_info["id"]),
+                },
+                {"$set": {
+                    "oauth_providers.$.access_token": access_token,
+                    "oauth_providers.$.username": user_info["login"],
+                }}
+            )
+        except Exception:
+            pass  # non-critical
+        
         # Create JWT token
         token_response = auth_service.create_token_response(user)
         
@@ -253,6 +286,39 @@ def github_exchange_token(code: str, state: str):
             email=email,
             user_info=user_info
         )
+        
+        # Save GitHub token for write operations (posting comments, closing issues, etc.)
+        from app.db.mongo import db as _db
+        from bson import ObjectId
+        import datetime as _dt
+        _now = _dt.datetime.utcnow()
+        # 1) Save to user_tokens keyed by user_id + github_username
+        _db["user_tokens"].update_one(
+            {"github_username": user_info["login"]},
+            {"$set": {
+                "github_username": user_info["login"],
+                "github_user_id": str(user_info["id"]),
+                "user_id": user.id,
+                "access_token": access_token,
+                "updated_at": _now,
+            }, "$setOnInsert": {"created_at": _now}},
+            upsert=True
+        )
+        # 2) Also store on user's oauth_providers sub-document for direct lookup
+        try:
+            _db["users"].update_one(
+                {
+                    "_id": ObjectId(user.id),
+                    "oauth_providers.provider": "github",
+                    "oauth_providers.provider_user_id": str(user_info["id"]),
+                },
+                {"$set": {
+                    "oauth_providers.$.access_token": access_token,
+                    "oauth_providers.$.username": user_info["login"],
+                }}
+            )
+        except Exception:
+            pass  # non-critical
         
         # Create JWT token
         token_response = auth_service.create_token_response(user)

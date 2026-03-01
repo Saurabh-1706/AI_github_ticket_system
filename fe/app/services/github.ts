@@ -217,7 +217,12 @@ export async function fetchCachedIssues(params: CacheIssuesParams): Promise<Cach
   if (params.min_similarity) url.searchParams.append("min_similarity", params.min_similarity.toString());
   if (params.user_token) url.searchParams.append("user_token", params.user_token);
 
-  const res = await fetch(url.toString());
+  // Send auth token so the backend can stamp synced_by_user_id on the repo (backfill)
+  const authToken = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+  const headers: HeadersInit = {};
+  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+
+  const res = await fetch(url.toString(), { headers });
   if (!res.ok) {
     const text = await res.text();
     console.error("Cache fetch failed:", res.status, text);
@@ -230,12 +235,13 @@ export async function fetchCachedIssues(params: CacheIssuesParams): Promise<Cach
 /**
  * Sync repository - Fetch new/updated issues from GitHub and update cache
  */
-export async function syncRepository(owner: string, repo: string, force: boolean = false, userToken?: string) {
+export async function syncRepository(owner: string, repo: string, force: boolean = false, userToken?: string, authToken?: string) {
   const res = await fetch(`${API_BASE}/api/cache/sync`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(userToken ? { "Authorization": `Bearer ${userToken}` } : {})
+      // authToken is the app JWT (used for user isolation); userToken is the raw GitHub token (for private repos)
+      ...((authToken || userToken) ? { "Authorization": `Bearer ${authToken ?? userToken}` } : {})
     },
     body: JSON.stringify({
       owner,
@@ -270,6 +276,63 @@ export async function getCacheStatus(owner: string, repo: string) {
 }
 
 /**
+ * Stream issues directly from GitHub via NDJSON (for first-visit, no-cache case).
+ * Calls onIssue for each issue as it arrives.
+ * Calls onComplete when the stream ends.
+ * Returns an AbortController.abort() fn to cancel.
+ */
+export function streamIssues(
+  owner: string,
+  repo: string,
+  userToken: string | undefined,
+  onIssue: (issue: any) => void,
+  onProgress: (fetched: number) => void,
+  onComplete: (total: number) => void,
+  onError: (err: string) => void,
+): AbortController {
+  const ctrl = new AbortController();
+  const url = new URL(`${API_BASE}/api/github/issues/${owner}/${repo}/stream`);
+  if (userToken) url.searchParams.set("user_token", userToken);
+
+  (async () => {
+    try {
+      const res = await fetch(url.toString(), { signal: ctrl.signal });
+      if (!res.ok || !res.body) {
+        onError("Streaming endpoint unavailable");
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";  // keep incomplete line in buffer
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.type === "issue") onIssue(msg.data);
+            if (msg.type === "progress") onProgress(msg.fetched);
+            if (msg.type === "complete") onComplete(msg.total);
+            if (msg.type === "error") onError(msg.error);
+          } catch { /* malformed line — skip */ }
+        }
+      }
+    } catch (e: any) {
+      if (e?.name !== "AbortError") onError(String(e));
+    }
+  })();
+
+  return ctrl;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+/**
  * Repository interface
  */
 export interface Repository {
@@ -284,8 +347,11 @@ export interface Repository {
 /**
  * Fetch all analyzed repositories
  */
-export async function fetchRepositories(): Promise<Repository[]> {
-  const res = await fetch(`${API_BASE}/api/cache/repositories`);
+export async function fetchRepositories(authToken?: string): Promise<Repository[]> {
+  const headers: HeadersInit = {};
+  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+
+  const res = await fetch(`${API_BASE}/api/cache/repositories`, { headers });
 
   if (!res.ok) {
     throw new Error("Failed to fetch repositories");
@@ -319,6 +385,12 @@ export interface GeneratedSolution {
   summary: string;
   is_code_fix: boolean;
   steps: string[];
+  // Precise diff fields
+  file_path: string;
+  path_confirmed: boolean;  // true = path came from real indexed files; false = GPT-guessed
+  code_before: string;
+  code_after: string;
+  // Legacy fallback
   code: string;
   code_language: string;
   code_explanation: string;
@@ -328,6 +400,7 @@ export interface GeneratedSolution {
   issue_title: string;
   created_at: string;
 }
+
 
 /**
  * Generate (or retrieve cached) AI solution for a GitHub issue.
@@ -360,4 +433,466 @@ export async function generateSolution(
 
   return res.json();
 }
+
+
+// ─────────────────────────────────────────────────────────────
+// PR Stats
+// ─────────────────────────────────────────────────────────────
+
+export interface PRStats {
+  open_prs: number;
+  closed_prs: number;
+  total_prs: number;
+}
+
+export async function fetchPRStats(owner: string, repo: string, userToken?: string): Promise<PRStats> {
+  const params = userToken ? `?user_token=${userToken}` : "";
+  const res = await fetch(`${API_BASE}/api/github/pr-stats/${owner}/${repo}${params}`);
+  if (!res.ok) throw new Error("Failed to fetch PR stats");
+  return res.json();
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// Issue Comments
+// ─────────────────────────────────────────────────────────────
+
+export interface IssueComment {
+  id: number;
+  author: string;
+  avatar_url: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchIssueComments(
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  userToken?: string
+): Promise<{ comments: IssueComment[]; count: number }> {
+  const params = userToken ? `?user_token=${userToken}` : "";
+  const res = await fetch(
+    `${API_BASE}/api/github/comments/${owner}/${repo}/${issueNumber}${params}`
+  );
+  if (!res.ok) throw new Error("Failed to fetch comments");
+  return res.json();
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// Linked PRs
+// ─────────────────────────────────────────────────────────────
+
+export interface LinkedPR {
+  pr_number: number;
+  title: string;
+  state: "open" | "closed" | "merged";
+  url: string;
+  created_at: string;
+}
+
+export async function fetchLinkedPRs(
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  userToken?: string
+): Promise<{ linked_prs: LinkedPR[]; count: number }> {
+  const params = userToken ? `?user_token=${userToken}` : "";
+  const res = await fetch(
+    `${API_BASE}/api/github/linked-prs/${owner}/${repo}/${issueNumber}${params}`
+  );
+  if (!res.ok) throw new Error("Failed to fetch linked PRs");
+  return res.json();
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// Analytics
+// ─────────────────────────────────────────────────────────────
+
+export interface AnalyticsSummary {
+  total_issues: number;
+  by_type: Record<string, number>;
+  by_week: { label: string; count: number }[];
+  by_criticality: Record<string, number>;
+  duplicate_rate: number;
+  state: { open: number; closed: number };
+}
+
+export async function fetchAnalyticsSummary(
+  owner: string,
+  repo: string
+): Promise<AnalyticsSummary> {
+  const res = await fetch(
+    `${API_BASE}/api/analytics/summary?owner=${owner}&repo=${repo}`
+  );
+  if (!res.ok) throw new Error("Failed to fetch analytics");
+  return res.json();
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// Full-text Search
+// ─────────────────────────────────────────────────────────────
+
+export interface SearchResult {
+  number: number;
+  title: string;
+  state: string;
+  snippet: string;
+  owner: string;
+  repo: string;
+  type?: string;
+  criticality?: string;
+}
+
+export async function searchIssues(
+  q: string,
+  owner?: string,
+  repo?: string
+): Promise<{ results: SearchResult[]; count: number; query: string }> {
+  const params = new URLSearchParams({ q });
+  if (owner) params.set("owner", owner);
+  if (repo) params.set("repo", repo);
+  const res = await fetch(`${API_BASE}/api/github/search?${params}`);
+  if (!res.ok) throw new Error("Search failed");
+  return res.json();
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// AI Features — Labels & Priority
+// ─────────────────────────────────────────────────────────────
+
+export interface LabelSuggestion {
+  suggested_labels: string[];
+  source: string;
+}
+
+export async function fetchSuggestedLabels(
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  title: string,
+  body: string
+): Promise<LabelSuggestion> {
+  const res = await fetch(`${API_BASE}/api/ai/suggest-labels`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ owner, repo, issue_number: issueNumber, title, body }),
+  });
+  if (!res.ok) throw new Error("Failed to fetch label suggestions");
+  return res.json();
+}
+
+export interface PriorityScore {
+  score: number;
+  label: string;
+  emoji: string;
+  breakdown: Record<string, number>;
+}
+
+export async function fetchPriorityScore(
+  owner: string,
+  repo: string,
+  issueNumber: number
+): Promise<PriorityScore> {
+  const res = await fetch(
+    `${API_BASE}/api/ai/priority-score/${owner}/${repo}/${issueNumber}`
+  );
+  if (!res.ok) throw new Error("Failed to fetch priority score");
+  return res.json();
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// Similar Issues
+// ─────────────────────────────────────────────────────────────
+
+export interface SimilarIssue {
+  number: number;
+  title: string;
+  state: "open" | "closed";
+  similarity: number;
+}
+
+export async function fetchSimilarIssues(
+  owner: string,
+  repo: string,
+  issueNumber: number
+): Promise<{ similar_issues: SimilarIssue[]; count: number }> {
+  const res = await fetch(
+    `${API_BASE}/api/ai/similar-issues/${owner}/${repo}/${issueNumber}`
+  );
+  if (!res.ok) throw new Error("Failed to fetch similar issues");
+  return res.json();
+}
+
+export interface CachedSolution {
+  summary: string;
+  is_code_fix: boolean;
+  steps: string[];
+  // Precise diff fields (populated when code context was available)
+  file_path: string;
+  code_before: string;
+  code_after: string;
+  // Legacy fallback
+  code: string;
+  code_language: string;
+  code_explanation: string;
+}
+
+
+/** Check if a cached solution already exists for an issue. Returns full solution if found. */
+export async function checkSolutionExists(
+  issueId: string | number
+): Promise<{ exists: boolean; issue_id: string; solution: CachedSolution | null }> {
+  const res = await fetch(`${API_BASE}/api/solution/check/${issueId}`);
+  if (!res.ok) throw new Error("Failed to check solution");
+  return res.json();
+}
+
+
+/**
+ * Delete the cached GPT solution for an issue.
+ * Allows the user to regenerate a fresh solution with up-to-date code context.
+ */
+export async function deleteSolution(issueId: string | number): Promise<{ deleted: boolean }> {
+  const res = await fetch(`${API_BASE}/api/solution/${issueId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to delete cached solution");
+  return res.json();
+}
+
+
+/** Fetch full cached issue detail by number (single-item endpoint — fast). */
+export async function fetchCachedIssueDetail(
+  owner: string,
+  repo: string,
+  issueNumber: number
+): Promise<any | null> {
+  const res = await fetch(`${API_BASE}/api/cache/issues/${owner}/${repo}/${issueNumber}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+
+
+
+// ─────────────────────────────────────────────────────────────
+// Global Analytics (multi-repo)
+// ─────────────────────────────────────────────────────────────
+
+export interface GlobalIssue {
+  number: number;
+  title: string;
+  state: string;
+  owner: string;
+  repo: string;
+  type?: string;
+  criticality?: string;
+  created_at?: string;
+}
+
+export interface GlobalAnalytics {
+  total: number;
+  by_repo: { owner: string; repo: string; full_name: string; count: number }[];
+  by_type: Record<string, number>;
+  issues: GlobalIssue[];
+}
+
+export async function fetchGlobalAnalytics(filters?: {
+  state?: string;
+  issue_type?: string;
+  criticality?: string;
+}): Promise<GlobalAnalytics> {
+  const params = new URLSearchParams();
+  if (filters?.state) params.set("state", filters.state);
+  if (filters?.issue_type) params.set("issue_type", filters.issue_type);
+  if (filters?.criticality) params.set("criticality", filters.criticality);
+  const res = await fetch(`${API_BASE}/api/analytics/global?${params}`);
+  if (!res.ok) throw new Error("Failed to fetch global analytics");
+  return res.json();
+}
+
+
+// -----------------------------------------------------------------
+// Post / Reply comment on an issue
+// -----------------------------------------------------------------
+
+export interface PostedComment {
+  id: number;
+  author: string;
+  avatar_url: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  url: string;
+}
+
+/**
+ * Post a comment on a GitHub issue.
+ * Pass replyTo to auto-format as a markdown quote-reply:
+ *   > original line
+ *
+ *   @author <body>
+ */
+export async function postIssueComment(
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  body: string,
+  authToken: string,   // app JWT (auth_token from localStorage) - NOT a raw GitHub token
+  replyTo?: { author: string; body: string }
+): Promise<PostedComment> {
+  let finalBody = body;
+  if (replyTo) {
+    const quoted = replyTo.body
+      .split("\n")
+      .map((l) => "> " + l)
+      .join("\n");
+    finalBody = quoted + "\n\n@" + replyTo.author + " " + body;
+  }
+  const res = await fetch(
+    `${API_BASE}/api/github/comment/${owner}/${repo}/${issueNumber}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({ body: finalBody }),
+    }
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let msg = "Failed to post comment";
+    try { msg = JSON.parse(errText).detail ?? msg; } catch { /* ignore */ }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Release Notes
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface Milestone {
+  number: number;
+  title: string;
+  description: string;
+  state: "open" | "closed";
+  open_issues: number;
+  closed_issues: number;
+  due_on: string | null;
+}
+
+export async function fetchMilestones(
+  owner: string,
+  repo: string,
+  userToken?: string
+): Promise<{ milestones: Milestone[]; count: number }> {
+  const params = userToken ? `?user_token=${userToken}` : "";
+  const res = await fetch(`${API_BASE}/api/ai/milestones/${owner}/${repo}${params}`);
+  if (!res.ok) throw new Error("Failed to fetch milestones");
+  return res.json();
+}
+
+export interface ReleaseNotes {
+  version: string;
+  summary: string;
+  sections: Record<string, string[]>;
+  raw_markdown: string;
+}
+
+export async function generateReleaseNotes(
+  owner: string,
+  repo: string,
+  milestoneNumber: number,
+  userToken?: string
+): Promise<ReleaseNotes> {
+  const res = await fetch(`${API_BASE}/api/ai/release-notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ owner, repo, milestone_number: milestoneNumber, user_token: userToken }),
+  });
+  if (!res.ok) throw new Error("Failed to generate release notes");
+  return res.json();
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suggested Assignees
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SuggestedAssignee {
+  login: string;
+  avatar_url: string;
+  profile_url: string;
+  commit_count: number;
+}
+
+export async function fetchSuggestedAssignees(
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  userToken?: string
+): Promise<{ assignees: SuggestedAssignee[]; source: string; keywords?: string[] }> {
+  const params = userToken ? `?user_token=${userToken}` : "";
+  const res = await fetch(
+    `${API_BASE}/api/ai/suggest-assignees/${owner}/${repo}/${issueNumber}${params}`
+  );
+  if (!res.ok) throw new Error("Failed to fetch suggested assignees");
+  return res.json();
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Risk Assessment Report
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface RiskReport {
+  risk_score: number;
+  risk_level: "Low" | "Medium" | "High" | "Critical";
+  executive_summary: string;
+  top_risks: {
+    title: string;
+    severity: "Low" | "Medium" | "High" | "Critical";
+    description: string;
+    mitigation: string;
+  }[];
+  recommendations: string[];
+  risk_areas: {
+    code_quality: number;
+    security: number;
+    technical_debt: number;
+    team_velocity: number;
+    reliability: number;
+  };
+  stats: {
+    total: number;
+    open: number;
+    closed: number;
+    close_rate: number;
+    by_type: Record<string, number>;
+    by_criticality: Record<string, number>;
+    stale: { "30d": number; "60d": number; "90d": number };
+    duplicate_rate: number;
+    security_count: number;
+    top_keywords: string[];
+    by_month: { label: string; count: number }[];
+  };
+}
+
+export async function fetchRiskReport(owner: string, repo: string): Promise<RiskReport> {
+  const res = await fetch(`${API_BASE}/api/ai/risk-report/${owner}/${repo}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Failed to generate risk report" }));
+    throw new Error(err.detail || "Failed to generate risk report");
+  }
+  return res.json();
+}
+
 

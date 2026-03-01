@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Query
+from pydantic import BaseModel
 import requests
 from app.utils.github_fetcher import github_fetcher
 from app.vector.embeddings import EmbeddingService
@@ -6,7 +7,7 @@ from app.vector.chroma_client import chroma
 from app.ai.categorizer import categorizer
 import numpy as np
 from datetime import datetime
-from app.db.mongo import repos_collection
+from app.db.mongo import repos_collection, cached_repositories, cached_issues
 
 
 
@@ -310,6 +311,7 @@ def rate_limit():
     return res.json()
 
 
+
 @router.get("/repos")
 def get_saved_repos(request: Request):
     """Get repositories analyzed by the current user."""
@@ -340,3 +342,353 @@ def get_saved_repos(request: Request):
         # If token verification fails, return empty list
         return []
 
+
+# ──────────────────────────────────────────────────────────────────────
+# Feature 1: PR Stats
+# ──────────────────────────────────────────────────────────────────────
+
+@router.get("/pr-stats/{owner}/{repo}")
+def get_pr_stats(owner: str, repo: str, user_token: str = None):
+    """
+    Get open and closed PR counts for a repository.
+    """
+    headers = github_fetcher.headers.copy()
+    if user_token:
+        headers["Authorization"] = f"Bearer {user_token}"
+
+    base = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+
+    try:
+        # Fetch 1 item per state — we just need the count from the Link header
+        # GitHub doesn't return total counts directly; use search API instead
+        search_url = "https://api.github.com/search/issues"
+
+        open_res = requests.get(
+            search_url,
+            headers=headers,
+            params={"q": f"repo:{owner}/{repo} is:pr is:open", "per_page": 1}
+        )
+        closed_res = requests.get(
+            search_url,
+            headers=headers,
+            params={"q": f"repo:{owner}/{repo} is:pr is:closed", "per_page": 1}
+        )
+
+        open_count = open_res.json().get("total_count", 0) if open_res.status_code == 200 else 0
+        closed_count = closed_res.json().get("total_count", 0) if closed_res.status_code == 200 else 0
+
+        return {
+            "open_prs": open_count,
+            "closed_prs": closed_count,
+            "total_prs": open_count + closed_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Feature 2: Issue Comments
+# ──────────────────────────────────────────────────────────────────────
+
+@router.get("/comments/{owner}/{repo}/{issue_number}")
+def get_issue_comments(owner: str, repo: str, issue_number: int, user_token: str = None):
+    """
+    Get comments for a specific issue.
+    """
+    headers = github_fetcher.headers.copy()
+    if user_token:
+        headers["Authorization"] = f"Bearer {user_token}"
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/comments"
+
+    try:
+        res = requests.get(url, headers=headers, params={"per_page": 50})
+        res.raise_for_status()
+
+        comments = [
+            {
+                "id": c["id"],
+                "author": c["user"]["login"],
+                "avatar_url": c["user"]["avatar_url"],
+                "body": c["body"],
+                "created_at": c["created_at"],
+                "updated_at": c["updated_at"],
+            }
+            for c in res.json()
+        ]
+        return {"comments": comments, "count": len(comments)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Feature 3: Linked PRs (via timeline events)
+# ──────────────────────────────────────────────────────────────────────
+
+@router.get("/linked-prs/{owner}/{repo}/{issue_number}")
+def get_linked_prs(owner: str, repo: str, issue_number: int, user_token: str = None):
+    """
+    Get PRs linked to a specific issue via timeline cross-reference events.
+    """
+    headers = github_fetcher.headers.copy()
+    headers["Accept"] = "application/vnd.github.mockingbird-preview+json"
+    if user_token:
+        headers["Authorization"] = f"Bearer {user_token}"
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/timeline"
+
+    try:
+        res = requests.get(url, headers=headers, params={"per_page": 100})
+        res.raise_for_status()
+
+        linked_prs = []
+        seen_prs = set()
+
+        for event in res.json():
+            if event.get("event") != "cross-referenced":
+                continue
+            source = event.get("source", {})
+            issue_ref = source.get("issue", {})
+            # Check if source is a pull request
+            if not issue_ref.get("pull_request"):
+                continue
+            pr_number = issue_ref.get("number")
+            if pr_number in seen_prs:
+                continue
+            seen_prs.add(pr_number)
+
+            pr = issue_ref.get("pull_request", {})
+            state = issue_ref.get("state", "unknown")
+            # merged state
+            if pr.get("merged_at"):
+                state = "merged"
+
+            linked_prs.append({
+                "pr_number": pr_number,
+                "title": issue_ref.get("title", ""),
+                "state": state,
+                "url": issue_ref.get("html_url", ""),
+                "created_at": issue_ref.get("created_at"),
+            })
+
+        return {"linked_prs": linked_prs, "count": len(linked_prs)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Full-text search ─────────────────────────────────────────────────────────
+@router.get("/search")
+async def search_issues(
+    q: str = Query(..., description="Search keyword"),
+    owner: str = Query(None, description="Filter by owner"),
+    repo: str = Query(None, description="Filter by repo name"),
+    limit: int = Query(20, le=100),
+):
+    """
+    Full-text search across cached issues.
+    Scopes to owner/repo when provided, otherwise searches all cached repos.
+    Uses MongoDB $text index; falls back to $regex if index is absent.
+    """
+    try:
+        match_filter = {}
+
+        # Scope by repo if provided
+        if owner and repo:
+            repo_doc = await cached_repositories.find_one({"owner": owner, "name": repo})
+            if repo_doc:
+                match_filter["repository_id"] = repo_doc["_id"]
+
+        # Try $text search first (fastest)
+        results = []
+        try:
+            text_filter = {**match_filter, "$text": {"$search": q}}
+            cursor = cached_issues.find(
+                text_filter,
+                {"score": {"$meta": "textScore"},
+                 "number": 1, "title": 1, "body": 1, "state": 1,
+                 "ai_analysis": 1, "repository_id": 1}
+            ).sort([("score", {"$meta": "textScore"})]).limit(limit)
+            async for doc in cursor:
+                results.append(doc)
+        except Exception:
+            # Fallback to $regex
+            regex = {"$regex": q, "$options": "i"}
+            regex_filter = {**match_filter, "$or": [{"title": regex}, {"body": regex}]}
+            cursor = cached_issues.find(
+                regex_filter,
+                {"number": 1, "title": 1, "body": 1, "state": 1,
+                 "ai_analysis": 1, "repository_id": 1}
+            ).limit(limit)
+            async for doc in cursor:
+                results.append(doc)
+
+        # Enrich with owner/repo info
+        repo_cache: dict = {}
+        enriched = []
+        for doc in results:
+            rid = doc.get("repository_id")
+            if rid and str(rid) not in repo_cache:
+                r = await cached_repositories.find_one({"_id": rid})
+                repo_cache[str(rid)] = r
+            r = repo_cache.get(str(rid), {}) if rid else {}
+
+            # Snippet: first 200 chars of body around keyword
+            body = doc.get("body") or ""
+            idx = body.lower().find(q.lower())
+            snippet = body[max(0, idx - 60): idx + 140].strip() if idx >= 0 else body[:200]
+
+            enriched.append({
+                "number": doc.get("number"),
+                "title": doc.get("title"),
+                "state": doc.get("state"),
+                "snippet": snippet,
+                "owner": r.get("owner", owner or ""),
+                "repo": r.get("name", repo or ""),
+                "type": (doc.get("ai_analysis") or {}).get("type"),
+                "criticality": (doc.get("ai_analysis") or {}).get("criticality"),
+            })
+
+        return {"results": enriched, "count": len(enriched), "query": q}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Post / Reply comment on a GitHub issue
+# ──────────────────────────────────────────────────────────────────────
+
+class PostCommentRequest(BaseModel):
+    body: str
+
+
+def _resolve_github_token(request) -> str:
+    """
+    Extract the app JWT from the Authorization header, decode it,
+    and look up the user's raw GitHub OAuth token.
+
+    Lookup order:
+      1. user_tokens collection keyed by user_id  (populated after our fix)
+      2. user_tokens collection keyed by github_username (old oauth.py flow)
+      3. users.oauth_providers[].access_token       (if stored there)
+    Raises HTTPException on any failure.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated. Please sign in to post comments."
+        )
+
+    from app.auth.auth_service import auth_service
+    from app.db.mongo import db as _db
+    from bson import ObjectId
+
+    jwt_token = auth_header.split(" ", 1)[1]
+    payload = auth_service.verify_token(jwt_token)
+    if not payload:
+        raise HTTPException(
+            status_code=401,
+            detail="Session expired. Please sign out and sign back in."
+        )
+
+    user_id = payload.get("sub")
+
+    # Path 1: user_tokens keyed by user_id (set during login after our fix)
+    token_doc = _db["user_tokens"].find_one({"user_id": user_id})
+    if token_doc and token_doc.get("access_token"):
+        return token_doc["access_token"]
+
+    # Path 2: look up the user doc, get their GitHub username, then query user_tokens by username
+    try:
+        user_doc = _db["users"].find_one({"_id": ObjectId(user_id)})
+    except Exception:
+        user_doc = None
+
+    if user_doc:
+        # Check oauth_providers for a stored access_token (Path 3)
+        for provider in user_doc.get("oauth_providers", []):
+            if provider.get("provider") == "github" and provider.get("access_token"):
+                return provider["access_token"]
+
+        # Path 2 continued: look up by github_username
+        github_username = None
+        for provider in user_doc.get("oauth_providers", []):
+            if provider.get("provider") == "github":
+                github_username = provider.get("username")
+                break
+        if github_username:
+            token_doc = _db["user_tokens"].find_one({"github_username": github_username})
+            if token_doc and token_doc.get("access_token"):
+                # Back-fill user_id for next time
+                _db["user_tokens"].update_one(
+                    {"github_username": github_username},
+                    {"$set": {"user_id": user_id}}
+                )
+                return token_doc["access_token"]
+
+    # Final fallback: use the server GITHUB_TOKEN env var.
+    # This works if the server token has write access to the target repo
+    # (e.g., developer's own repos during local development).
+    import os
+    server_token = os.getenv("GITHUB_TOKEN")
+    if server_token:
+        return server_token
+
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "No GitHub token found. "
+            "Please sign out and sign back in with GitHub to enable commenting."
+        )
+    )
+
+
+@router.post("/comment/{owner}/{repo}/{issue_number}")
+def post_issue_comment(
+    owner: str,
+    repo: str,
+    issue_number: int,
+    payload: PostCommentRequest,
+    request: Request,
+):
+    """
+    Post a comment on a GitHub issue on behalf of the authenticated user.
+    Reads the app JWT from Authorization header and resolves the GitHub
+    OAuth token server-side - no raw GitHub token ever exposed to the frontend.
+    """
+    if not payload.body.strip():
+        raise HTTPException(status_code=400, detail="Comment body cannot be empty")
+
+    github_token = _resolve_github_token(request)
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/comments"
+    gh_headers = {
+        "Authorization": f"token {github_token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    try:
+        res = requests.post(url, headers=gh_headers, json={"body": payload.body}, timeout=15)
+        if res.status_code == 401:
+            raise HTTPException(status_code=401, detail="GitHub token is invalid or expired - please sign in again")
+        if res.status_code == 403:
+            raise HTTPException(status_code=403, detail="Token lacks permission to comment on this repository")
+        if res.status_code == 404:
+            raise HTTPException(status_code=404, detail="Issue or repository not found")
+        res.raise_for_status()
+        data = res.json()
+        return {
+            "id": data["id"],
+            "author": data["user"]["login"],
+            "avatar_url": data["user"]["avatar_url"],
+            "body": data["body"],
+            "created_at": data["created_at"],
+            "updated_at": data["updated_at"],
+            "url": data["html_url"],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to post comment: {e}")
