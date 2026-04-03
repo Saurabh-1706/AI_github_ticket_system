@@ -4,15 +4,19 @@ import { useEffect, useState } from "react";
 import { fetchRepositories, deleteRepository, type Repository } from "../services/github";
 import RepositoryCard from "../components/RepositoryCard";
 import LoadingSpinner from "../components/LoadingSpinner";
+import { useAuth } from "../components/AuthProvider";
 
 export default function RepositoriesPage() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
 
   useEffect(() => {
+    // Wait until AuthProvider has finished reading from localStorage
+    if (authLoading) return;
     loadRepositories();
-  }, []);
+  }, [isAuthenticated, authLoading]);
 
   const loadRepositories = async () => {
     try {

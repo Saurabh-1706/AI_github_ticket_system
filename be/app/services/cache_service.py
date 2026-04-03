@@ -4,11 +4,12 @@ Cache service for MongoDB-backed issue caching with AI analysis
 import asyncio
 import concurrent.futures
 import logging
+import os
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Any
+from typing import Any, Dict, List, Optional
 
+import httpx
 from bson import ObjectId
-import requests
 
 from app.db.mongo import cached_repositories, cached_issues
 
@@ -272,73 +273,75 @@ class CacheService:
         owner: str,
         repo: str,
         since: Optional[str] = None,
-        user_token: Optional[str] = None
+        user_token: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Fetch ALL issues from GitHub API (paginates until exhausted)"""
-        import os
-
+        """Fetch ALL issues from GitHub API using async HTTP (paginates until exhausted)."""
         # Always use a token — fall back to the server's GITHUB_TOKEN if caller
-        # didn't supply one.  Without a token, GitHub caps us at 60 req/hr which
-        # is enough to fail silently on even small repos.
+        # didn't supply one.  Without a token, GitHub caps us at 60 req/hr.
         token = user_token or os.getenv("GITHUB_TOKEN", "")
 
         headers = {"Accept": "application/vnd.github.v3+json"}
         if token:
             headers["Authorization"] = f"token {token}"
 
-        issues = []
+        issues: List[Dict[str, Any]] = []
         page = 1
         max_pages = 500  # Safety ceiling — enough for any real repo
 
-        while page <= max_pages:
-            url = f"{self.github_api_base}/repos/{owner}/{repo}/issues"
-            params = {
-                "state": "all",
-                "per_page": 100,
-                "page": page,
-                "sort": "updated",
-                "direction": "desc"
-            }
-            if since:
-                params["since"] = since
+        async with httpx.AsyncClient(timeout=30) as http:
+            while page <= max_pages:
+                url = f"{self.github_api_base}/repos/{owner}/{repo}/issues"
+                params: Dict[str, Any] = {
+                    "state": "all",
+                    "per_page": 100,
+                    "page": page,
+                    "sort": "updated",
+                    "direction": "desc",
+                }
+                if since:
+                    params["since"] = since
 
-            try:
-                response = requests.get(url, headers=headers, params=params, timeout=30)
+                try:
+                    response = await http.get(url, headers=headers, params=params)
 
-                # Detect rate limiting early
-                if response.status_code == 403:
-                    remaining = response.headers.get("X-RateLimit-Remaining", "?")
-                    logger.warning(
-                        f"GitHub rate limit hit fetching {owner}/{repo} page {page} "
-                        f"(remaining={remaining}). Stopping pagination with {len(issues)} issues so far."
+                    # Detect rate limiting early
+                    if response.status_code == 403:
+                        remaining = response.headers.get("X-RateLimit-Remaining", "?")
+                        logger.warning(
+                            f"GitHub rate limit hit fetching {owner}/{repo} page {page} "
+                            f"(remaining={remaining}). Stopping with {len(issues)} issues so far."
+                        )
+                        break
+
+                    if response.status_code == 422:
+                        logger.warning(f"GitHub API pagination limit reached at page {page}")
+                        break
+
+                    response.raise_for_status()
+
+                    page_issues: List[Dict[str, Any]] = response.json()
+                    if not page_issues:
+                        break
+
+                    has_more_pages = len(page_issues) >= 100
+
+                    # Filter out pull requests
+                    page_issues = [i for i in page_issues if "pull_request" not in i]
+                    issues.extend(page_issues)
+
+                    logger.info(
+                        f"Fetched page {page} for {owner}/{repo}: {len(page_issues)} issues "
+                        f"(total so far: {len(issues)})"
                     )
-                    break
 
-                response.raise_for_status()
+                    if not has_more_pages:
+                        break
 
-                page_issues = response.json()
-                if not page_issues:
-                    break  # No more issues
+                    page += 1
 
-                # Check pagination before filtering PRs
-                has_more_pages = len(page_issues) >= 100
-
-                # Filter out pull requests (GitHub issues endpoint returns PRs too)
-                page_issues = [i for i in page_issues if "pull_request" not in i]
-                issues.extend(page_issues)
-
-                logger.info(f"Fetched page {page} for {owner}/{repo}: {len(page_issues)} issues (total so far: {len(issues)})")
-
-                if not has_more_pages:
-                    break
-
-                page += 1
-
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 422:
-                    logger.warning(f"GitHub API pagination limit reached at page {page}")
-                    break
-                raise
+                except httpx.HTTPStatusError as e:
+                    logger.error(f"HTTP error fetching {owner}/{repo} page {page}: {e}")
+                    raise
 
         logger.info(f"Finished fetching {owner}/{repo}: {len(issues)} real issues across {page} pages")
         return issues

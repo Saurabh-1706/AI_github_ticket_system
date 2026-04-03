@@ -4,7 +4,7 @@ Authentication API endpoints.
 
 import os
 
-import requests
+import httpx
 from fastapi import APIRouter, HTTPException, Response, Request
 from fastapi.responses import RedirectResponse
 
@@ -80,7 +80,7 @@ def _get_github_primary_email(access_token: str) -> str | None:
     """
     headers = {"Authorization": f"Bearer {access_token}"}
     try:
-        resp = requests.get("https://api.github.com/user/emails", headers=headers, timeout=10)
+        resp = httpx.get("https://api.github.com/user/emails", headers=headers, timeout=10)
         emails = resp.json()
         primary = next((e for e in emails if e.get("primary")), None)
         return primary["email"] if primary else None

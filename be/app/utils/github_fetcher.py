@@ -1,9 +1,18 @@
+"""
+GitHub API helper — wraps common GitHub REST API calls.
+Uses httpx.Client (sync) so it is safe to call from both regular (def) routes
+and from thread-pool workers spawned by FastAPI for sync endpoints.
+"""
+
 import os
-import requests
 from functools import lru_cache
+
+import httpx
 
 
 class GitHubFetcher:
+    """Encapsulates GitHub API access with optional per-request user tokens."""
+
     def __init__(self):
         self.token = os.getenv("GITHUB_TOKEN")
         self.base_url = "https://api.github.com"
@@ -11,12 +20,16 @@ class GitHubFetcher:
             "Authorization": f"Bearer {self.token}",
             "Accept": "application/vnd.github.v3+json",
         }
+        # Shared sync client — reuse connections across requests
+        self._client = httpx.Client(timeout=30)
+
+    # ── Public API ─────────────────────────────────────────────────────────────
 
     @lru_cache(maxsize=100)
-    def get_repo(self, owner: str, repo: str, user_token: str = None):
+    def get_repo(self, owner: str, repo: str, user_token: str | None = None) -> dict:
         """
         Fetch repository details. Optionally use user's OAuth token for private repos.
-        Results are cached (LRU, max 100 entries) to avoid repeated API calls.
+        Results are LRU-cached (max 100 entries) to avoid repeated API calls.
 
         Args:
             owner: Repository owner
@@ -26,16 +39,15 @@ class GitHubFetcher:
         Returns:
             Repository data dict from GitHub API
         """
-        headers = self.headers.copy()
-        if user_token:
-            headers["Authorization"] = f"Bearer {user_token}"
-
+        headers = self._build_headers(user_token)
         url = f"{self.base_url}/repos/{owner}/{repo}"
-        res = requests.get(url, headers=headers)
+        res = self._client.get(url, headers=headers)
         res.raise_for_status()
         return res.json()
 
-    def check_repo_visibility(self, owner: str, repo: str, user_token: str = None):
+    def check_repo_visibility(
+        self, owner: str, repo: str, user_token: str | None = None
+    ) -> dict:
         """
         Check if a repository is public or private and whether we have access.
 
@@ -47,24 +59,22 @@ class GitHubFetcher:
                 "repo_exists": bool
             }
         """
-        headers = self.headers.copy()
-        if user_token:
-            headers["Authorization"] = f"Bearer {user_token}"
-
+        headers = self._build_headers(user_token)
         url = f"{self.base_url}/repos/{owner}/{repo}"
-        res = requests.get(url, headers=headers)
+        res = self._client.get(url, headers=headers)
 
         if res.status_code == 404:
             # Could be private without access, or simply non-existent.
             # Try with the server token to differentiate.
-            res_default = requests.get(url, headers=self.headers)
+            res_default = self._client.get(url, headers=self.headers)
             return {
                 "is_private": True,
                 "has_access": False,
                 "requires_auth": True,
                 "repo_exists": res_default.status_code != 404,
             }
-        elif res.status_code == 200:
+
+        if res.status_code == 200:
             data = res.json()
             return {
                 "is_private": data.get("private", False),
@@ -72,22 +82,22 @@ class GitHubFetcher:
                 "requires_auth": False,
                 "repo_exists": True,
             }
-        else:
-            return {
-                "is_private": False,
-                "has_access": False,
-                "requires_auth": True,
-                "repo_exists": False,
-            }
+
+        return {
+            "is_private": False,
+            "has_access": False,
+            "requires_auth": True,
+            "repo_exists": False,
+        }
 
     def get_issues(
         self,
         owner: str,
         repo: str,
-        user_token: str = None,
+        user_token: str | None = None,
         page: int = 1,
         per_page: int = 30,
-    ):
+    ) -> dict:
         """
         Get repository issues with pagination support.
 
@@ -101,10 +111,7 @@ class GitHubFetcher:
         Returns:
             Dict with ``issues`` list and ``pagination`` metadata
         """
-        headers = self.headers.copy()
-        if user_token:
-            headers["Authorization"] = f"Bearer {user_token}"
-
+        headers = self._build_headers(user_token)
         url = f"{self.base_url}/repos/{owner}/{repo}/issues"
         params = {
             "state": "all",
@@ -112,12 +119,12 @@ class GitHubFetcher:
             "per_page": min(per_page, 100),  # GitHub API cap is 100
         }
 
-        res = requests.get(url, headers=headers, params=params)
+        res = self._client.get(url, headers=headers, params=params)
         res.raise_for_status()
         issues = res.json()
 
         # Parse Link header for pagination info
-        link_header = res.headers.get("Link", "")
+        link_header = res.headers.get("link", "")
         has_next = 'rel="next"' in link_header
         has_prev = 'rel="prev"' in link_header
 
@@ -132,9 +139,14 @@ class GitHubFetcher:
             },
         }
 
-    def _headers(self):
-        """Return a copy of the default request headers."""
-        return self.headers.copy()
+    # ── Private helpers ────────────────────────────────────────────────────────
+
+    def _build_headers(self, user_token: str | None = None) -> dict:
+        """Return request headers, overriding Authorization when a user token is supplied."""
+        h = self.headers.copy()
+        if user_token:
+            h["Authorization"] = f"Bearer {user_token}"
+        return h
 
 
 github_fetcher = GitHubFetcher()

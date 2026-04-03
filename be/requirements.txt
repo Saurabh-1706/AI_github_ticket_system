@@ -8,9 +8,7 @@ numpy
 pymongo
 motor
 pydantic
-pydantic-settings
 PyJWT
-requests
 passlib[bcrypt]
 python-jose[cryptography]
 bcrypt

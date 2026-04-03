@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { storeAuthToken, storeUserData, getCurrentUser } from "../../../services/auth";
+import { getCurrentUser } from "../../../services/auth";
+import { useAuth } from "../../../components/AuthProvider";
 
 export default function GitHubCallbackPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { login } = useAuth();
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [message, setMessage] = useState("Processing GitHub authentication...");
 
@@ -60,22 +62,14 @@ export default function GitHubCallbackPage() {
             throw new Error("No token received from backend");
           }
 
-          console.log("✅ Token received from backend");
-          
-          // Store the token
-          storeAuthToken(tokenFromBackend);
-          console.log("💾 Token stored in localStorage");
-
-          // Get user data
           const user = await getCurrentUser(tokenFromBackend);
-          storeUserData(user);
-          console.log("💾 User data stored:", user);
+
+          // Persist + update AuthProvider state atomically
+          login(tokenFromBackend, user);
 
           setStatus("success");
           setMessage("GitHub authentication successful! Redirecting...");
-          
-          // Redirect to home page
-          setTimeout(() => router.push("/"), 1000);
+          router.push("/");
           return;
           
         } catch (err) {
@@ -89,20 +83,12 @@ export default function GitHubCallbackPage() {
 
       // If we already have a token (from direct backend redirect)
       if (token) {
-        console.log("✅ Token found in URL");
         try {
-          // Store the token
-          storeAuthToken(token);
-
-          // Get user data
           const user = await getCurrentUser(token);
-          storeUserData(user);
-
+          login(token, user);
           setStatus("success");
           setMessage("GitHub authentication successful! Redirecting...");
-          
-          // Redirect to home page
-          setTimeout(() => router.push("/"), 1000);
+          router.push("/");
         } catch (err) {
           setStatus("error");
           setMessage("Failed to retrieve user information");

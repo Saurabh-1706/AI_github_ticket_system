@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 import os
-import requests
+import httpx
 from datetime import datetime
 from app.db.mongo import db
 
@@ -60,28 +60,28 @@ async def callback(code: str, state: str = None):
         "code": code,
     }
     
-    headers = {"Accept": "application/json"}
-    response = requests.post(token_url, data=token_data, headers=headers)
-    
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Failed to get access token")
-    
-    token_response = response.json()
-    access_token = token_response.get("access_token")
-    
-    if not access_token:
-        raise HTTPException(status_code=400, detail="No access token in response")
-    
-    # Get user info from GitHub
-    user_response = requests.get(
-        "https://api.github.com/user",
-        headers={"Authorization": f"Bearer {access_token}"}
-    )
-    
-    if user_response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Failed to get user info")
-    
-    user_data = user_response.json()
+    async with httpx.AsyncClient() as http:
+        response = await http.post(token_url, data=token_data, headers=headers)
+
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to get access token")
+
+        token_response = response.json()
+        access_token = token_response.get("access_token")
+
+        if not access_token:
+            raise HTTPException(status_code=400, detail="No access token in response")
+
+        # Get user info from GitHub
+        user_response = await http.get(
+            "https://api.github.com/user",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+
+        if user_response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to get user info")
+
+        user_data = user_response.json()
     github_user_id = user_data.get("id")
     github_username = user_data.get("login")
     

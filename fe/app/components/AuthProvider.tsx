@@ -1,7 +1,15 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { getAuthToken, getUserData, removeAuthToken, removeUserData, getCurrentUser } from "../services/auth";
+import {
+  getAuthToken,
+  getUserData,
+  removeAuthToken,
+  removeUserData,
+  storeAuthToken,
+  storeUserData,
+  getCurrentUser,
+} from "../services/auth";
 
 interface User {
   id: string;
@@ -29,42 +37,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Check for existing auth on mount
-    const initAuth = async () => {
-      const token = getAuthToken();
-      const userData = getUserData();
-
-      console.log("🔐 AuthProvider init - Token:", token ? "exists" : "none");
-      console.log("🔐 AuthProvider init - UserData:", userData);
-
-      if (token && userData) {
-        setUser(userData);
-        
-        // Optionally verify token is still valid
-        try {
-          console.log("🔄 Verifying token with backend...");
-          const freshUserData = await getCurrentUser(token);
-          console.log("✅ Token valid, user data refreshed");
-          // Persist fresh data (includes avatar_url) back to localStorage
-          const { storeUserData } = await import("../services/auth");
-          storeUserData(freshUserData);
-          setUser(freshUserData);
-        } catch (err) {
-          // Token expired or invalid
-          console.warn("⚠️ Token verification failed:", err);
-          console.log("🔄 Keeping cached user data, token might still be valid");
-          // Don't auto-logout on initial load - keep cached data
-          // The token will be validated on next API call
-        }
-      }
-      
-      setIsLoading(false);
-    };
-
-    initAuth();
+    // Restore auth state from localStorage synchronously — no network call.
+    // The JWT will be validated naturally on the first real API call.
+    const token = getAuthToken();
+    const userData = getUserData();
+    if (token && userData) {
+      setUser(userData);
+    }
+    setIsLoading(false);
   }, []);
 
   const login = (token: string, userData: User) => {
+    // Persist immediately so page refreshes and OAuth redirects always work.
+    storeAuthToken(token);
+    storeUserData(userData);
     setUser(userData);
   };
 

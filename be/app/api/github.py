@@ -3,7 +3,9 @@ GitHub API router — issue fetching, repository management, PR stats,
 comments, linked PRs, full-text search, and comment posting.
 """
 
+import asyncio
 import logging
+import os
 import traceback
 from datetime import datetime
 
@@ -14,6 +16,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from app.ai.categorizer import categorizer
+from app.auth.auth_service import auth_service
+from app.db.mongo import db as _mongo_db
 from app.db.mongo import repos_collection, cached_repositories, cached_issues
 from app.utils.github_fetcher import github_fetcher
 from app.vector.chroma_client import chroma
@@ -265,7 +269,6 @@ def check_repo_access(owner: str, repo: str, user_token: str = None):
 @router.get("/repo/{owner}/{repo}")
 def fetch_repo(owner: str, repo: str, request: Request):
     """Fetch repository details and associate with the current authenticated user."""
-    from app.auth.auth_service import auth_service
 
     user_id = None
     auth_header = request.headers.get("Authorization")
@@ -324,7 +327,6 @@ async def rate_limit():
 @router.get("/repos")
 def get_saved_repos(request: Request):
     """Get repositories analyzed by the current user."""
-    from app.auth.auth_service import auth_service
 
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -542,9 +544,6 @@ def _resolve_github_token(request: Request) -> str:
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated. Please sign in to post comments.")
 
-    from app.auth.auth_service import auth_service
-    from app.db.mongo import db as _db
-
     jwt_token = auth_header.split(" ", 1)[1]
     payload = auth_service.verify_token(jwt_token)
     if not payload:
@@ -553,13 +552,13 @@ def _resolve_github_token(request: Request) -> str:
     user_id = payload.get("sub")
 
     # Path 1: user_tokens keyed by user_id
-    token_doc = _db["user_tokens"].find_one({"user_id": user_id})
+    token_doc = _mongo_db["user_tokens"].find_one({"user_id": user_id})
     if token_doc and token_doc.get("access_token"):
         return token_doc["access_token"]
 
     # Path 2 & 3: look up user doc
     try:
-        user_doc = _db["users"].find_one({"_id": ObjectId(user_id)})
+        user_doc = _mongo_db["users"].find_one({"_id": ObjectId(user_id)})
     except Exception:
         user_doc = None
 
@@ -575,17 +574,16 @@ def _resolve_github_token(request: Request) -> str:
             None,
         )
         if github_username:
-            token_doc = _db["user_tokens"].find_one({"github_username": github_username})
+            token_doc = _mongo_db["user_tokens"].find_one({"github_username": github_username})
             if token_doc and token_doc.get("access_token"):
                 # Back-fill user_id for faster future lookups
-                _db["user_tokens"].update_one(
+                _mongo_db["user_tokens"].update_one(
                     {"github_username": github_username},
                     {"$set": {"user_id": user_id}},
                 )
                 return token_doc["access_token"]
 
     # Final fallback: server GITHUB_TOKEN env var (works for developer's own repos)
-    import os
     server_token = os.getenv("GITHUB_TOKEN")
     if server_token:
         return server_token
@@ -648,5 +646,3 @@ async def post_issue_comment(
         raise HTTPException(status_code=500, detail=f"Failed to post comment: {e}")
 
 
-# asyncio is used by get_pr_stats for concurrent requests
-import asyncio

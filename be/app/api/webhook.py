@@ -10,13 +10,16 @@ Setup:
      Events      : Issues (select "Issues" only)
 """
 
-import os
-import hmac
+import asyncio
 import hashlib
+import hmac
 import logging
+import os
 from datetime import datetime
-from fastapi import APIRouter, Request, HTTPException, Header
 from typing import Optional
+
+import httpx
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.db.mongo import cached_repositories, cached_issues
 from app.services.cache_service import CacheService
@@ -153,7 +156,6 @@ async def github_webhook(
         )
 
         # Embed into ChromaDB so similarity search stays current
-        import asyncio
         loop = asyncio.get_event_loop()
         loop.run_in_executor(None, _embed_and_store, owner, repo_name, issue_data)
 
@@ -176,75 +178,57 @@ async def register_webhook(owner: str, repo: str):
     Requires GITHUB_TOKEN with admin:repo_hook (or write:repo_hook) scope.
     Skips creation if a webhook pointing to our backend already exists.
     """
-    import requests as _req
+    async with httpx.AsyncClient(timeout=10) as http:
+        try:
+            existing = await http.get(hooks_api, headers=headers)
+            if existing.status_code == 403:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Token lacks admin:repo_hook permission. Re-generate your GitHub token with that scope."
+                )
+            if existing.status_code == 404:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Cannot register webhook on {owner}/{repo} — you must be the owner or an admin of this repo. Webhooks can only be created on repos you control."
+                )
+            existing.raise_for_status()
+            for hook in existing.json():
+                if webhook_url in hook.get("config", {}).get("url", ""):
+                    return {"status": "already_exists", "webhook_url": webhook_url}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Could not list hooks: {e}")
 
-    token = os.getenv("GITHUB_TOKEN", "")
-    backend_url = os.getenv("BACKEND_URL", "").rstrip("/")
-
-    if not token:
-        raise HTTPException(status_code=400, detail="GITHUB_TOKEN not set in backend .env")
-    if not backend_url:
-        raise HTTPException(status_code=400, detail="BACKEND_URL not set in backend .env")
-
-    webhook_url = f"{backend_url}/api/github/webhook"
-    hooks_api = f"https://api.github.com/repos/{owner}/{repo}/hooks"
-    headers = {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json",
-    }
-
-    # Check for existing hook to avoid duplicates
-    try:
-        existing = _req.get(hooks_api, headers=headers, timeout=10)
-        if existing.status_code == 403:
-            raise HTTPException(
-                status_code=403,
-                detail="Token lacks admin:repo_hook permission. Re-generate your GitHub token with that scope."
-            )
-        if existing.status_code == 404:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Cannot register webhook on {owner}/{repo} — you must be the owner or an admin of this repo. Webhooks can only be created on repos you control."
-            )
-        existing.raise_for_status()
-        for hook in existing.json():
-            if webhook_url in hook.get("config", {}).get("url", ""):
+        # Create new webhook
+        payload = {
+            "name": "web",
+            "active": True,
+            "events": ["issues"],
+            "config": {
+                "url": webhook_url,
+                "content_type": "json",
+                "secret": WEBHOOK_SECRET or "",
+                "insecure_ssl": "0",
+            },
+        }
+        try:
+            resp = await http.post(hooks_api, headers=headers, json=payload)
+            if resp.status_code == 422:
                 return {"status": "already_exists", "webhook_url": webhook_url}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not list hooks: {e}")
-
-    # Create new webhook
-    payload = {
-        "name": "web",
-        "active": True,
-        "events": ["issues"],
-        "config": {
-            "url": webhook_url,
-            "content_type": "json",
-            "secret": WEBHOOK_SECRET or "",
-            "insecure_ssl": "0",
-        },
-    }
-    try:
-        resp = _req.post(hooks_api, headers=headers, json=payload, timeout=10)
-        if resp.status_code == 422:
-            # Already exists (race condition)
-            return {"status": "already_exists", "webhook_url": webhook_url}
-        if resp.status_code == 403:
-            raise HTTPException(
-                status_code=403,
-                detail="Token lacks admin:repo_hook permission. Re-generate your GitHub token with that scope."
-            )
-        resp.raise_for_status()
-        hook = resp.json()
-        logger.info(f"✅ Webhook registered for {owner}/{repo}: {webhook_url}")
-        return {"status": "created", "webhook_url": webhook_url, "hook_id": hook.get("id")}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create webhook: {e}")
+            if resp.status_code == 403:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Token lacks admin:repo_hook permission. Re-generate your GitHub token with that scope."
+                )
+            resp.raise_for_status()
+            hook = resp.json()
+            logger.info(f"✅ Webhook registered for {owner}/{repo}: {webhook_url}")
+            return {"status": "created", "webhook_url": webhook_url, "hook_id": hook.get("id")}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create webhook: {e}")
 
 
 # ─────────────────────────────────────────
@@ -273,15 +257,15 @@ async def get_webhook_status(owner: str, repo: str):
         }
 
     try:
-        resp = _req.get(
-            f"https://api.github.com/repos/{owner}/{repo}/hooks",
-            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"},
-            timeout=10,
-        )
-        if resp.status_code == 403:
-            return {"active": False, "checked": False, "reason": "Insufficient token permissions", "setup_url": setup_url}
-        resp.raise_for_status()
-        hooks = resp.json()
+        async with httpx.AsyncClient(timeout=10) as http:
+            resp = await http.get(
+                f"https://api.github.com/repos/{owner}/{repo}/hooks",
+                headers={"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"},
+            )
+            if resp.status_code == 403:
+                return {"active": False, "checked": False, "reason": "Insufficient token permissions", "setup_url": setup_url}
+            resp.raise_for_status()
+            hooks = resp.json()
         active = any(
             backend_url and backend_url in h.get("config", {}).get("url", "")
             for h in hooks

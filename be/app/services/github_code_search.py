@@ -8,7 +8,7 @@ import base64
 import logging
 import os
 import re
-import requests
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ def search_code_files(
     params = {"q": q, "per_page": 10}
 
     try:
-        resp = requests.get(url, headers=_get_headers(token), params=params, timeout=15)
+        resp = httpx.get(url, headers=_get_headers(token), params=params, timeout=15)
         if resp.status_code == 403:
             logger.warning("GitHub Code Search rate-limited (403) — no code context.")
             return []
@@ -122,7 +122,7 @@ def fetch_file_content(
     """
     url = f"{GITHUB_API}/repos/{owner}/{repo}/contents/{path}"
     try:
-        resp = requests.get(url, headers=_get_headers(token), timeout=15)
+        resp = httpx.get(url, headers=_get_headers(token), timeout=15)
         resp.raise_for_status()
         data = resp.json()
         encoded = data.get("content", "")

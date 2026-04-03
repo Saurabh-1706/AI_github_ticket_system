@@ -14,7 +14,7 @@ import base64
 import logging
 import os
 import re
-import requests
+import httpx
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -89,7 +89,7 @@ def _chunk_text(text: str, path: str, chunk_size: int = CHUNK_SIZE) -> list[dict
 def _get_default_branch(owner: str, repo: str, token: Optional[str]) -> Optional[str]:
     url = f"{GITHUB_API}/repos/{owner}/{repo}"
     try:
-        r = requests.get(url, headers=_headers(token), timeout=15)
+        r = httpx.get(url, headers=_headers(token), timeout=15)
         r.raise_for_status()
         return r.json().get("default_branch", "main")
     except Exception as e:
@@ -101,7 +101,7 @@ def _list_tree_files(owner: str, repo: str, branch: str, token: Optional[str]) -
     """Use the Git Trees API (recursive) to list all file paths."""
     url = f"{GITHUB_API}/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
     try:
-        r = requests.get(url, headers=_headers(token), timeout=30)
+        r = httpx.get(url, headers=_headers(token), timeout=30)
         r.raise_for_status()
         tree = r.json().get("tree", [])
         return [
@@ -118,7 +118,7 @@ def _fetch_file(owner: str, repo: str, path: str, token: Optional[str]) -> Optio
     """Fetch a single file's text content from GitHub."""
     url = f"{GITHUB_API}/repos/{owner}/{repo}/contents/{path}"
     try:
-        r = requests.get(url, headers=_headers(token), timeout=15)
+        r = httpx.get(url, headers=_headers(token), timeout=15)
         if r.status_code == 404:
             return None
         r.raise_for_status()

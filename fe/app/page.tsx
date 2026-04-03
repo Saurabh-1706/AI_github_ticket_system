@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuth } from "./components/AuthProvider";
 import UserMenu from "./components/UserMenu";
 import RepoInput from "./components/RepoInput";
+import type { Repository } from "./services/github";
 
 export default function Home() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -83,29 +84,57 @@ export default function Home() {
 
 // Recently Analyzed Repositories Component
 function RecentlyAnalyzedRepos() {
-  const [repositories, setRepositories] = useState<any[]>([]);
+  const [repositories, setRepositories] = useState<Repository[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
 
   useEffect(() => {
+    // Wait until AuthProvider has finished reading from localStorage.
+    if (authLoading) return;
+
     const loadRepos = async () => {
+      setLoading(true);
       try {
         const { fetchRepositories } = await import("./services/github");
-        const authToken = typeof window !== "undefined" ? localStorage.getItem("auth_token") ?? undefined : undefined;
+        const authToken =
+          typeof window !== "undefined"
+            ? localStorage.getItem("auth_token") ?? undefined
+            : undefined;
         const repos = await fetchRepositories(authToken);
-        // Get latest 3
         setRepositories(repos.slice(0, 3));
       } catch (error) {
         console.error("Failed to load repositories:", error);
+        setRepositories([]);
       } finally {
         setLoading(false);
       }
     };
 
     loadRepos();
-  }, []);
+  }, [isAuthenticated, authLoading]); // re-run when auth state resolves
 
-  if (loading || repositories.length === 0) {
+  // While auth or repos are loading, show a skeleton so layout doesn't jump
+  if (authLoading || loading) {
+    return (
+      <div className="mt-12">
+        <div className="mb-6">
+          <div className="h-7 w-64 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-700" />
+          <div className="mt-2 h-4 w-48 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+        </div>
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="h-36 animate-pulse rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800"
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || repositories.length === 0) {
     return null;
   }
 
