@@ -1,8 +1,9 @@
 {
   "/page": "app/page.js",
-  "/login/page": "app/login/page.js",
-  "/repository/page": "app/repository/page.js",
-  "/register/page": "app/register/page.js",
   "/repositories/page": "app/repositories/page.js",
-  "/auth/google/callback/page": "app/auth/google/callback/page.js"
+  "/login/page": "app/login/page.js",
+  "/auth/google/callback/page": "app/auth/google/callback/page.js",
+  "/register/page": "app/register/page.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/repository/page": "app/repository/page.js"
 }

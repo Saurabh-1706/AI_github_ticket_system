@@ -2,9 +2,12 @@
 Analytics API — aggregates issue data from MongoDB for dashboard charts.
 
 GET /api/analytics/summary?owner=&repo=
+GET /api/analytics/global
 """
 
 import logging
+from typing import Optional
+
 from fastapi import APIRouter, Query, HTTPException
 from app.db.mongo import cached_repositories, cached_issues
 
@@ -109,13 +112,14 @@ async def get_analytics_summary(
 
 @router.get("/global")
 async def get_global_analytics(
-    state: str = None,
-    issue_type: str = None,
-    criticality: str = None,
+    state: Optional[str] = None,
+    issue_type: Optional[str] = None,
+    criticality: Optional[str] = None,
     limit: int = 50,
 ):
     """
     Aggregate issue counts and a sampled feed across ALL cached repositories.
+    Uses a single $lookup aggregation to avoid N+1 repo queries.
     Optional filters: state, type, criticality.
     """
     try:
@@ -129,56 +133,69 @@ async def get_global_analytics(
 
         total = await cached_issues.count_documents(match)
 
-        # Per-repo counts
+        # Per-repo counts + enrichment via $lookup (single aggregation — no N+1)
         repo_pipeline = [
             {"$match": match},
             {"$group": {"_id": "$repository_id", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}},
+            {
+                "$lookup": {
+                    "from": "cached_repositories",
+                    "localField": "_id",
+                    "foreignField": "_id",
+                    "as": "repo_info",
+                }
+            },
+            {"$unwind": {"path": "$repo_info", "preserveNullAndEmptyArrays": True}},
         ]
-        repo_cursor = cached_issues.aggregate(repo_pipeline)
-        repo_counts_raw = [doc async for doc in repo_cursor]
-
-        # Enrich repo counts with owner/name
         repo_counts = []
-        for entry in repo_counts_raw:
-            r = await cached_repositories.find_one({"_id": entry["_id"]})
-            if r:
-                repo_counts.append({
-                    "owner": r.get("owner", ""),
-                    "repo": r.get("name", ""),
-                    "full_name": r.get("full_name", ""),
-                    "count": entry["count"],
-                })
+        async for entry in cached_issues.aggregate(repo_pipeline):
+            ri = entry.get("repo_info") or {}
+            repo_counts.append({
+                "owner": ri.get("owner", ""),
+                "repo": ri.get("name", ""),
+                "full_name": ri.get("full_name", ""),
+                "count": entry["count"],
+            })
 
-        # Recent issues feed (sampled across all repos)
-        cursor = cached_issues.find(
-            match,
-            {"number": 1, "title": 1, "state": 1, "ai_analysis": 1,
-             "repository_id": 1, "created_at": 1}
-        ).sort("created_at", -1).limit(limit)
-        issues_raw = [doc async for doc in cursor]
-
-        # Enrich with repo info
-        rid_cache: dict = {}
-        issues = []
-        for doc in issues_raw:
-            rid = doc.get("repository_id")
-            if rid and str(rid) not in rid_cache:
-                r = await cached_repositories.find_one({"_id": rid})
-                rid_cache[str(rid)] = r
-            r = rid_cache.get(str(rid), {}) if rid else {}
-            issues.append({
+        # Recent issues feed — also enriched via $lookup (no N+1)
+        feed_pipeline = [
+            {"$match": match},
+            {"$sort": {"created_at": -1}},
+            {"$limit": limit},
+            {
+                "$lookup": {
+                    "from": "cached_repositories",
+                    "localField": "repository_id",
+                    "foreignField": "_id",
+                    "as": "repo_info",
+                }
+            },
+            {"$unwind": {"path": "$repo_info", "preserveNullAndEmptyArrays": True}},
+            {
+                "$project": {
+                    "number": 1, "title": 1, "state": 1,
+                    "ai_analysis": 1, "created_at": 1,
+                    "owner": "$repo_info.owner",
+                    "repo": "$repo_info.name",
+                }
+            },
+        ]
+        issues = [
+            {
                 "number": doc.get("number"),
                 "title": doc.get("title"),
                 "state": doc.get("state"),
-                "owner": r.get("owner", ""),
-                "repo": r.get("name", ""),
+                "owner": doc.get("owner", ""),
+                "repo": doc.get("repo", ""),
                 "type": (doc.get("ai_analysis") or {}).get("type"),
                 "criticality": (doc.get("ai_analysis") or {}).get("criticality"),
                 "created_at": doc.get("created_at"),
-            })
+            }
+            async for doc in cached_issues.aggregate(feed_pipeline)
+        ]
 
-        # Type breakdown globally
+        # Global type breakdown
         type_pipeline = [
             {"$match": match},
             {"$group": {"_id": "$ai_analysis.type", "count": {"$sum": 1}}},

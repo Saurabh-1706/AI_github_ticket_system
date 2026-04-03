@@ -163,11 +163,13 @@ async def generate_solution(payload: GenerateSolutionRequest):
 # ─────────────────────────────────────────
 
 @router.post("/reuse")
-def reuse_solution(payload: dict):
+async def reuse_solution(payload: dict):
+    """Suggest solution reuse based on a similar issue."""
     similar_issue = payload.get("similar_issue")
     if not similar_issue:
         return {"error": "No similar issue provided"}
     return suggest_solution_reuse(similar_issue)
+
 
 
 # ─────────────────────────────────────────

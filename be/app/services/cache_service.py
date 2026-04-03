@@ -1,9 +1,12 @@
 """
 Cache service for MongoDB-backed issue caching with AI analysis
 """
+import asyncio
+import concurrent.futures
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
+
 from bson import ObjectId
 import requests
 
@@ -241,7 +244,6 @@ class CacheService:
 
         # ── Kick off source-code indexing in background ─────────────────────
         # Runs in a thread pool so it doesn't block the HTTP response.
-        import asyncio, concurrent.futures
         def _run_code_index():
             try:
                 from app.services.code_indexer import index_repository, is_indexed

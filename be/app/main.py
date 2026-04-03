@@ -1,8 +1,12 @@
 from dotenv import load_dotenv
+
 load_dotenv()
+
+import logging
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import logging
 
 from app.api import github, analysis, solution, oauth, streaming, auth, cache, analytics, ai_features
 from app.middleware.error_handlers import register_exception_handlers
@@ -24,10 +28,15 @@ app = FastAPI(
 # Middleware
 # -----------------------------
 
-# CORS (Frontend support)
+# CORS
+# allow_origins="*" cannot be combined with allow_credentials=True (browser rejects it).
+# Use an explicit list from the environment variable ALLOWED_ORIGINS.
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3001")
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # during development
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,12 +74,20 @@ def root():
 
 @app.get("/health")
 def health_check():
-    """Detailed health check endpoint."""
+    """Detailed health check — probes the real MongoDB connection."""
+    from app.db.mongo import client as _mongo_client
+    db_status = "disconnected"
+    try:
+        _mongo_client.admin.command("ping")
+        db_status = "connected"
+    except Exception:
+        db_status = "unreachable"
+
+    overall = "healthy" if db_status == "connected" else "degraded"
     return {
-        "status": "healthy",
+        "status": overall,
         "services": {
             "api": "running",
-            "database": "connected",
-            "embeddings": "loaded"
-        }
+            "database": db_status,
+        },
     }

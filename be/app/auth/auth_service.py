@@ -4,6 +4,7 @@ Authentication service for user management and JWT tokens.
 
 import os
 import secrets
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 from passlib.context import CryptContext
@@ -11,12 +12,20 @@ from jose import JWTError, jwt
 from app.auth.models import User, UserCreate, UserLogin, UserResponse, TokenResponse
 from app.db.mongo import get_database
 
+logger = logging.getLogger(__name__)
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT Configuration
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_urlsafe(32))
+_env_secret = os.getenv("JWT_SECRET_KEY")
+if not _env_secret:
+    logger.warning(
+        "JWT_SECRET_KEY not set in environment. A random key was generated. "
+        "ALL existing JWT tokens will be invalidated on every server restart. "
+        "Set JWT_SECRET_KEY to a stable value in production."
+    )
+SECRET_KEY = _env_secret or secrets.token_urlsafe(32)
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRATION_MINUTES", "60"))
 
@@ -78,7 +87,8 @@ class AuthService:
         )
         
         # Insert into database
-        result = self.users_collection.insert_one(user.dict(by_alias=True))
+        # model_dump() is the Pydantic v2 API; .dict() is deprecated in v2
+        result = self.users_collection.insert_one(user.model_dump(by_alias=True))
         user.id = str(result.inserted_id)
         
         return user
@@ -123,7 +133,7 @@ class AuthService:
             user = User(**user_doc)
             user.id = str(user_doc["_id"])
             return user
-        except:
+        except Exception:
             return None
     
     def create_token_response(self, user: User) -> TokenResponse:

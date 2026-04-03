@@ -4,12 +4,17 @@ Issues are streamed directly from GitHub as they arrive — no blocking analysis
 AI analysis + MongoDB storage runs in the background via cache_service.
 """
 
+import asyncio
+import json
+import logging
+import os
+
+import httpx
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-import json
-import asyncio
-import os
-import requests as http_requests
+
+logger = logging.getLogger(__name__)
+
 
 router = APIRouter()
 
@@ -26,84 +31,85 @@ async def _stream_issues_from_github(owner: str, repo: str, user_token: str | No
 
     base_url = f"https://api.github.com/repos/{owner}/{repo}/issues"
 
-    # ── metadata frame ───────────────────────────────────────────────────────
     yield json.dumps({"type": "start"}) + "\n"
 
     page = 1
     total_sent = 0
 
-    while True:
-        params = {"state": "all", "per_page": 100, "page": page,
-                  "sort": "updated", "direction": "desc"}
+    async with httpx.AsyncClient() as http:
+        while True:
+            params = {"state": "all", "per_page": 100, "page": page,
+                      "sort": "updated", "direction": "desc"}
 
-        try:
-            resp = http_requests.get(base_url, headers=headers, params=params, timeout=30)
+            try:
+                resp = await http.get(base_url, headers=headers, params=params, timeout=30)
 
-            if resp.status_code == 403:
-                yield json.dumps({"type": "error", "error": "GitHub rate limit hit"}) + "\n"
+                if resp.status_code == 403:
+                    yield json.dumps({"type": "error", "error": "GitHub rate limit hit"}) + "\n"
+                    break
+
+                resp.raise_for_status()
+                raw_issues = resp.json()
+
+            except Exception as exc:
+                yield json.dumps({"type": "error", "error": str(exc)}) + "\n"
                 break
 
-            resp.raise_for_status()
-            raw_issues = resp.json()
+            if not raw_issues:
+                break
 
-        except Exception as exc:
-            yield json.dumps({"type": "error", "error": str(exc)}) + "\n"
-            break
+            has_more = len(raw_issues) >= 100
 
-        if not raw_issues:
-            break
+            for issue in raw_issues:
+                if "pull_request" in issue:
+                    continue  # skip PRs
 
-        has_more = len(raw_issues) >= 100
+                # Minimal categorization (fast, pure Python — no embeddings)
+                try:
+                    from app.ai.categorizer import categorizer as _cat
+                    cat_info = _cat.categorize(issue.get("title", ""), issue.get("body", "") or "")
+                    category = cat_info.get("primary_category", "general")
+                except Exception:
+                    category = "general"
 
-        for issue in raw_issues:
-            if "pull_request" in issue:
-                continue  # skip PRs
+                yield json.dumps({
+                    "type": "issue",
+                    "data": {
+                        "number":     issue["number"],
+                        "title":      issue.get("title", ""),
+                        "body":       issue.get("body", "") or "",
+                        "state":      issue["state"],
+                        "created_at": issue.get("created_at", ""),
+                        "updated_at": issue.get("updated_at", ""),
+                        "labels":     [lb["name"] for lb in issue.get("labels", [])],
+                        "user":       issue.get("user") or {},
+                        "category":   category,
+                        # Placeholder AI fields — filled in once background sync completes
+                        "ai_analysis": {
+                            "type":           category,
+                            "criticality":    "low",
+                            "confidence":     0,
+                            "similar_issues": [],
+                        },
+                        "duplicate_info": {
+                            "classification": "new",
+                            "similarity":     0,
+                        },
+                    }
+                }) + "\n"
+                total_sent += 1
 
-            # Minimal categorization (fast, pure Python — no embeddings)
-            try:
-                from app.ai.categorizer import categorizer as _cat
-                cat_info = _cat.categorize(issue.get("title", ""), issue.get("body", "") or "")
-                category = cat_info.get("primary_category", "general")
-            except Exception:
-                category = "general"
+            yield json.dumps({"type": "progress", "fetched": total_sent, "page": page}) + "\n"
 
-            yield json.dumps({
-                "type": "issue",
-                "data": {
-                    "number":     issue["number"],
-                    "title":      issue.get("title", ""),
-                    "body":       issue.get("body", "") or "",
-                    "state":      issue["state"],
-                    "created_at": issue.get("created_at", ""),
-                    "updated_at": issue.get("updated_at", ""),
-                    "labels":     [lb["name"] for lb in issue.get("labels", [])],
-                    "user":       issue.get("user") or {},
-                    "category":   category,
-                    # Placeholder AI fields — filled in once background sync completes
-                    "ai_analysis": {
-                        "type":          category,
-                        "criticality":   "low",
-                        "confidence":    0,
-                        "similar_issues": [],
-                    },
-                    "duplicate_info": {
-                        "classification": "new",
-                        "similarity":     0,
-                    },
-                }
-            }) + "\n"
-            total_sent += 1
+            # Let the event loop breathe between pages
+            await asyncio.sleep(0)
 
-        yield json.dumps({"type": "progress", "fetched": total_sent, "page": page}) + "\n"
-
-        # Let the event loop breathe
-        await asyncio.sleep(0)
-
-        if not has_more:
-            break
-        page += 1
+            if not has_more:
+                break
+            page += 1
 
     yield json.dumps({"type": "complete", "total": total_sent}) + "\n"
+
 
 
 @router.get("/issues/{owner}/{repo}/stream")

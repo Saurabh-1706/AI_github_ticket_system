@@ -9,7 +9,7 @@ import re
 from typing import Dict, List, Tuple
 
 
-class IssueCategori:
+class IssueCategorizer:
     """
     Categorizes GitHub issues based on title and body content.
     """
@@ -183,4 +183,4 @@ class IssueCategori:
 
 
 # Singleton instance
-categorizer = IssueCategori()
+categorizer = IssueCategorizer()
