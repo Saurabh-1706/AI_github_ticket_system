@@ -76,6 +76,135 @@ OUTPUT FORMAT (strict JSON):
 }"""
 
 
+# ─── RAG-aware system prompt ──────────────────────────────────────────────────
+
+RAG_SYSTEM_PROMPT = """You are an expert software engineer reviewing a GitHub issue.
+You have been given:
+  1. The CURRENT issue to solve.
+  2. SIMILAR PAST ISSUES from the same repository along with how they were resolved.
+  3. Optionally, RELEVANT SOURCE FILES from the codebase.
+
+Your task:
+  - Briefly summarize what you learned from the similar past issues (patterns, common causes).
+  - Use those insights PLUS the source code (if provided) to suggest the best solution for the current issue.
+  - Be concrete: provide numbered, actionable steps and a code fix when needed.
+
+RULES:
+1. Determine whether the issue requires CODE CHANGES or NOT (documentation, questions, config, process).
+2. For CODE issues: Provide steps AND a minimal code snippet showing exactly what to change.
+3. For NON-CODE issues: Provide steps and a clear description only — NO code blocks.
+4. Keep snippets minimal — only the essential lines that fix the issue.
+5. Your response MUST be valid JSON only — no extra text, no markdown fences.
+6. Leave "file_path" as "" if you are not 100% certain of the exact file path.
+
+OUTPUT FORMAT (strict JSON):
+{
+  "similar_issues_summary": "2-3 sentence summary of patterns/causes learned from similar past issues",
+  "summary": "One-sentence description of the root cause and fix for the current issue",
+  "is_code_fix": true or false,
+  "steps": [
+    "Step 1: ...",
+    "Step 2: ...",
+    "Step 3: ..."
+  ],
+  "file_path": "exact/relative/path/to/file.py ONLY if 100% certain, else empty string",
+  "code_before": "The exact existing lines that need to change (copy verbatim from source, else empty string)",
+  "code_after": "The corrected replacement lines (else empty string)",
+  "code": "Same as code_after, for backward compatibility",
+  "code_language": "python/javascript/typescript/bash/etc (empty if not a code fix)",
+  "code_explanation": "One sentence: what the code change does and why it fixes the issue (empty if not a code fix)"
+}"""
+
+
+def generate_with_rag_context(
+    issue_id: str,
+    title: str,
+    body: str,
+    owner: str,
+    repo: str,
+    similar_issues: list[dict],
+    code_chunks: list[dict] | None = None,
+) -> dict:
+    """
+    Full RAG Step 7: pass the current issue + retrieved similar issues (with
+    their past solutions) + optional source-code context to GPT so it can
+    summarize patterns and suggest the best fix.
+
+    similar_issues: list of {
+        "number": int,
+        "title": str,
+        "body": str,          # optional
+        "similarity": float,
+        "solution_summary": str,  # past solution summary (may be empty)
+        "solution_steps": list[str],
+    }
+    code_chunks: list of {"path": str, "content": str}
+    """
+    if not similar_issues and not code_chunks:
+        logger.info(f"No RAG context for issue {issue_id} — falling back to base prompt.")
+        return generate_with_gpt(issue_id, title, body, owner, repo)
+
+    # ── Build SIMILAR ISSUES block ──────────────────────────────────────────
+    similar_block = ""
+    for idx, sim in enumerate(similar_issues, 1):
+        sim_pct = int(sim.get("similarity", 0) * 100)
+        steps_text = ""
+        if sim.get("solution_steps"):
+            steps_text = "\n".join(
+                f"      {i+1}. {s}" for i, s in enumerate(sim["solution_steps"][:4])
+            )
+
+        similar_block += (
+            f"\n\n### Similar Issue {idx} (Similarity: {sim_pct}%)\n"
+            f"Title: {sim.get('title', 'N/A')}\n"
+        )
+        if sim.get("body"):
+            similar_block += f"Description (excerpt): {sim['body'][:300]}\n"
+        if sim.get("solution_summary"):
+            similar_block += f"Past Solution Summary: {sim['solution_summary']}\n"
+        if steps_text:
+            similar_block += f"Past Solution Steps:\n{steps_text}\n"
+        if not sim.get("solution_summary") and not steps_text:
+            similar_block += "Past Solution: (no recorded solution)\n"
+
+    # ── Build SOURCE CODE block (optional) ─────────────────────────────────
+    code_block = ""
+    if code_chunks:
+        for chunk in code_chunks:
+            code_block += f"\n\n### FILE: {chunk['path']}\n```\n{chunk['content']}\n```"
+
+    # ── Assemble final prompt ────────────────────────────────────────────────
+    user_message = f"""GitHub Repository: {owner}/{repo}
+
+CURRENT ISSUE TO SOLVE
+======================
+Title: {title}
+Description:
+{body or 'No description provided.'}
+"""
+    if similar_block:
+        user_message += f"\n--- SIMILAR PAST ISSUES (retrieved via semantic search) ---{similar_block}"
+    if code_block:
+        user_message += f"\n--- RELEVANT SOURCE FILES ---{code_block}"
+
+    user_message += (
+        "\n\nUsing the similar past issues and source files above, "
+        "summarize what you learned, then provide the best structured solution "
+        "in the required JSON format."
+    )
+
+    result = _call_gpt(RAG_SYSTEM_PROMPT, user_message, issue_id)
+
+    # Mirror code_after → code for backward compat
+    if not result.get("code") and result.get("code_after"):
+        result["code"] = result["code_after"]
+
+    result["path_confirmed"] = bool(result.get("file_path") and code_chunks)
+    result["rag_used"] = True
+    result["similar_issues_count"] = len(similar_issues)
+    return result
+
+
 def generate_with_gpt(issue_id: str, title: str, body: str, owner: str, repo: str) -> dict:
     """
     Generate an AI solution without source-code context (original behaviour).
@@ -150,7 +279,7 @@ def _call_gpt(system_prompt: str, user_message: str, issue_id: str) -> dict:
                 {"role": "user", "content": user_message}
             ],
             temperature=0.3,
-            max_tokens=1800,
+            max_tokens=2000,
             response_format={"type": "json_object"}
         )
 
@@ -161,6 +290,8 @@ def _call_gpt(system_prompt: str, user_message: str, issue_id: str) -> dict:
 
         return {
             "issue_id": issue_id,
+            # RAG-specific field (present only when RAG prompt was used)
+            "similar_issues_summary": solution.get("similar_issues_summary", ""),
             "summary": solution.get("summary", "No summary available."),
             "is_code_fix": is_code,
             "steps": solution.get("steps", []),

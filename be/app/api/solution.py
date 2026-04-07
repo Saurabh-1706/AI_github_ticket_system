@@ -10,7 +10,11 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.ai.gpt_solution_generator import generate_with_gpt, generate_with_code_context
+from app.ai.gpt_solution_generator import (
+    generate_with_gpt,
+    generate_with_code_context,
+    generate_with_rag_context,
+)
 from app.db.mongo import solutions
 from app.core.solution_reuse_advisor import suggest_solution_reuse
 
@@ -24,6 +28,7 @@ def _solution_fields(doc: dict) -> dict:
     """Extract the solution fields we expose via API."""
     return {
         "summary": doc.get("summary"),
+        "similar_issues_summary": doc.get("similar_issues_summary", ""),
         "is_code_fix": doc.get("is_code_fix", False),
         "steps": doc.get("steps", []),
         # New precise-diff fields
@@ -32,6 +37,9 @@ def _solution_fields(doc: dict) -> dict:
         "code_after": doc.get("code_after", ""),
         # Whether file_path was confirmed from real indexed source files
         "path_confirmed": doc.get("path_confirmed", False),
+        # RAG metadata
+        "rag_used": doc.get("rag_used", False),
+        "similar_issues_count": doc.get("similar_issues_count", 0),
         # Legacy / fallback
         "code": doc.get("code", ""),
         "code_language": doc.get("code_language", ""),
@@ -73,16 +81,94 @@ class GenerateSolutionRequest(BaseModel):
 
 
 # ─────────────────────────────────────────
+# RAG helper — Step 7
+# ─────────────────────────────────────────
+
+async def _fetch_similar_issues_with_solutions(
+    owner: str,
+    repo: str,
+    title: str,
+    body: str,
+    exclude_issue_id: str,
+    limit: int = 4,
+) -> list[dict]:
+    """
+    RAG retrieval step:
+    1. Embed the current issue and query Chroma for semantically similar issues
+       within the same repository.
+    2. For each similar issue found, look up its stored GPT solution in MongoDB.
+    3. Return a list ready to be injected into the RAG prompt.
+    """
+    similar: list[dict] = []
+    try:
+        import numpy as np
+        from app.vector.embeddings import EmbeddingService
+        from app.vector.chroma_client import chroma
+
+        embedding_service = EmbeddingService()
+        query_text = f"{title}\n{(body or '')[:500]}"
+        embedding = embedding_service.embed_text(query_text)
+
+        results = chroma.query(owner, repo, embedding, limit=limit + 1)  # +1 to allow self-filter
+
+        ids: list[str] = results.get("ids", [[]])[0]
+        metadatas: list[dict] = results.get("metadatas", [[]])[0]
+        embeddings_list = results.get("embeddings", [[]])[0]
+
+        query_vec = np.array(embedding)
+        query_norm = np.linalg.norm(query_vec)
+
+        for i, (issue_id, meta) in enumerate(zip(ids, metadatas)):
+            if issue_id == exclude_issue_id:
+                continue  # skip self
+
+            # Cosine similarity
+            sim_vec = np.array(embeddings_list[i])
+            cos_sim = float(np.dot(query_vec, sim_vec) / (query_norm * np.linalg.norm(sim_vec) + 1e-9))
+
+            if cos_sim < 0.55:  # discard low-relevance results
+                continue
+
+            # Look up cached GPT solution for this similar issue
+            past_solution = await solutions.find_one(
+                {"issue_id": issue_id},
+                {"summary": 1, "steps": 1, "_id": 0}
+            )
+
+            similar.append({
+                "number": meta.get("number"),
+                "title": meta.get("title", ""),
+                "body": meta.get("body", ""),
+                "similarity": round(cos_sim, 4),
+                "solution_summary": past_solution.get("summary", "") if past_solution else "",
+                "solution_steps": past_solution.get("steps", []) if past_solution else [],
+            })
+
+            if len(similar) >= limit:
+                break
+
+    except Exception as e:
+        logger.warning(f"RAG retrieval failed (will proceed without): {e}")
+
+    return similar
+
+
+# ─────────────────────────────────────────
 # POST /api/solution/generate
 # ─────────────────────────────────────────
 
 @router.post("/generate")
 async def generate_solution(payload: GenerateSolutionRequest):
     """
-    Generate an AI solution for a GitHub issue using GPT-4o-mini.
-    1. Returns a cached result if one already exists.
-    2. Otherwise: searches the repo for relevant source files, feeds them to GPT,
-       and saves the result (with file_path / code_before / code_after) to MongoDB.
+    Generate an AI solution for a GitHub issue using GPT-4o-mini with full RAG.
+
+    Pipeline:
+      1. Return cached solution if one already exists.
+      2. Fetch relevant source-code context (vector index → keyword fallback).
+      3. RAG Step 7: retrieve semantically similar issues from Chroma and look
+         up their past solutions from MongoDB.
+      4. Call GPT with: current issue + similar issues + their solutions + source code.
+      5. Persist the enriched solution to MongoDB.
     """
     try:
         # ── 1. Check MongoDB cache ──────────────────────────────────────────
@@ -97,7 +183,6 @@ async def generate_solution(payload: GenerateSolutionRequest):
         # ── 2. Fetch relevant source-code context ───────────────────────────
         code_chunks: list[dict] = []
         try:
-            # Priority 1: Semantic vector search over the code index (fastest + most accurate)
             from app.services.code_indexer import search_code, is_indexed
             if is_indexed(payload.owner, payload.repo):
                 query = f"{payload.title}\n{(payload.body or '')[:400]}"
@@ -108,8 +193,6 @@ async def generate_solution(payload: GenerateSolutionRequest):
                         f"🔎 Vector code search: {[c['path'] for c in code_chunks]} "
                         f"for issue {payload.issue_id}"
                     )
-
-            # Priority 2: GitHub keyword search (fallback when no index exists)
             if not code_chunks:
                 from app.services.github_code_search import get_code_context
                 code_chunks = get_code_context(
@@ -127,19 +210,33 @@ async def generate_solution(payload: GenerateSolutionRequest):
         except Exception as e:
             logger.warning(f"Code context fetch failed (proceeding without): {e}")
 
+        # ── 3. RAG Step 7: retrieve similar issues + their past solutions ────
+        similar_issues = await _fetch_similar_issues_with_solutions(
+            owner=payload.owner,
+            repo=payload.repo,
+            title=payload.title,
+            body=payload.body or "",
+            exclude_issue_id=payload.issue_id,
+        )
+        if similar_issues:
+            logger.info(
+                f"🧠 RAG: {len(similar_issues)} similar issue(s) retrieved "
+                f"for issue {payload.issue_id}"
+            )
 
-        # ── 3. Generate via GPT-4o-mini ─────────────────────────────────────
-        logger.info(f"🤖 Generating GPT solution for issue {payload.issue_id}...")
-        solution = generate_with_code_context(
+        # ── 4. Generate via GPT with full RAG context ───────────────────────
+        logger.info(f"🤖 Generating RAG solution for issue {payload.issue_id}...")
+        solution = generate_with_rag_context(
             issue_id=payload.issue_id,
             title=payload.title,
             body=payload.body,
             owner=payload.owner,
             repo=payload.repo,
+            similar_issues=similar_issues,
             code_chunks=code_chunks,
         )
 
-        # ── 4. Enrich with metadata and persist ─────────────────────────────
+        # ── 5. Enrich with metadata and persist ─────────────────────────────
         solution["owner"] = payload.owner
         solution["repo"] = payload.repo
         solution["issue_title"] = payload.title
@@ -148,7 +245,7 @@ async def generate_solution(payload: GenerateSolutionRequest):
 
         await solutions.insert_one({**solution})
 
-        logger.info(f"✅ Solution saved to MongoDB for issue {payload.issue_id}")
+        logger.info(f"✅ RAG solution saved to MongoDB for issue {payload.issue_id}")
         return {"cached": False, "solution": solution}
 
     except ValueError as e:
