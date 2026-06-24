@@ -15,6 +15,7 @@ fe/node_modules
 /coverage
 
 # next.js
+fe/.next/
 /.next/
 /out/
 
@@ -52,6 +53,7 @@ dist/
 build/
 
 # ChromaDB
+be/chroma_db/
 chroma/
 chroma_db/
 *.chroma
