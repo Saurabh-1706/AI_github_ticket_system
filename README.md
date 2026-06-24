@@ -36,8 +36,8 @@
 |---|---|
 | Frontend | Next.js 15, TypeScript, Tailwind CSS |
 | Backend | FastAPI (Python), Uvicorn |
-| Database | MongoDB (Motor async driver) |
-| AI | OpenAI GPT-4o-mini |
+| Database | MongoDB Atlas & Atlas Vector Search |
+| AI | OpenAI GPT-4o-mini & SentenceTransformers (`all-MiniLM-L6-v2`) |
 | Auth | JWT + GitHub OAuth + Google OAuth |
 
 ---
@@ -47,7 +47,7 @@
 ### Prerequisites
 - Node.js 18+
 - Python 3.10+
-- MongoDB running locally (`mongodb://localhost:27017`)
+- MongoDB Atlas cluster (required for Atlas Vector Search)
 - OpenAI API key
 - GitHub OAuth App (Client ID + Secret)
 
@@ -55,14 +55,70 @@
 
 **Backend** — create `be/.env`:
 ```env
-MONGO_URI=mongodb://localhost:27017
+MONGO_URI=mongodb+srv://<username>:<password>@cluster.mongodb.net/git_intellisolve?retryWrites=true&w=majority
 OPENAI_API_KEY=sk-...
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
-JWT_SECRET=your-secret-key
+JWT_SECRET_KEY=your-secret-key
 ```
+
+---
+
+## MongoDB Atlas Vector Search Setup
+
+This project utilizes MongoDB Atlas Vector Search for issue deduplication and source-code context RAG. 
+
+You must set up a Search Index named **`vector_index`** on both the `issue_vectors` and `code_vectors` collections:
+
+### 1. Issue Similarity Search Index
+*   **Collection**: `issue_vectors`
+*   **Index Name**: `vector_index`
+*   **Index Type**: JSON Editor
+*   **Index Definition**:
+    ```json
+    {
+      "fields": [
+        {
+          "type": "vector",
+          "path": "embedding",
+          "numDimensions": 384,
+          "similarity": "cosine"
+        },
+        {
+          "type": "filter",
+          "path": "repo"
+        },
+        {
+          "type": "filter",
+          "path": "state"
+        }
+      ]
+    }
+    ```
+
+### 2. Code Search Index
+*   **Collection**: `code_vectors`
+*   **Index Name**: `vector_index`
+*   **Index Type**: JSON Editor
+*   **Index Definition**:
+    ```json
+    {
+      "fields": [
+        {
+          "type": "vector",
+          "path": "embedding",
+          "numDimensions": 384,
+          "similarity": "cosine"
+        },
+        {
+          "type": "filter",
+          "path": "repo"
+        }
+      ]
+    }
+    ```
 
 **Frontend** — create `fe/.env.local`:
 ```env
