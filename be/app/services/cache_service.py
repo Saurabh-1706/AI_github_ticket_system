@@ -182,7 +182,7 @@ class CacheService:
                         )
                         
                         # Store in ChromaDB BEFORE analysis (so similarity search works)
-                        chroma_manager.add_issue(
+                        await chroma_manager.add_issue(
                             repo_name=f"{owner}/{repo}",
                             issue_number=issue_data["number"],
                             title=issue_data["title"],
@@ -372,7 +372,7 @@ class CacheService:
 
             embedding = embedder.embed_issue(title, body)
             repo_name = f"{owner}/{repo}"
-            similar_issues = chroma_manager.find_similar_issues(
+            similar_issues = await chroma_manager.find_similar_issues(
                 repo_name=repo_name,
                 embedding=embedding,
                 top_k=3,
@@ -494,13 +494,29 @@ class CacheService:
             # Delete repository document
             await cached_repositories.delete_one({"_id": repo_doc["_id"]})
             
-            # Delete from ChromaDB
+            # Delete from ChromaDB (MongoDB Atlas issue_vectors)
             try:
                 from app.core.chroma_manager import chroma_manager
-                chroma_manager.reset_collection(f"{owner}/{repo}")
-                logger.info(f"Deleted ChromaDB collection for {owner}/{repo}")
+                await chroma_manager.reset_collection(f"{owner}/{repo}")
+                logger.info(f"Deleted issue vectors for {owner}/{repo}")
             except Exception as e:
-                logger.warning(f"Failed to delete ChromaDB collection: {e}")
+                logger.warning(f"Failed to delete issue vectors: {e}")
+
+            # Delete code vectors from code_vectors collection
+            try:
+                from app.db.mongo import code_vectors
+                code_vectors_res = await code_vectors.delete_many({"repo": f"{owner}/{repo}"})
+                logger.info(f"Deleted {code_vectors_res.deleted_count} code vectors for {owner}/{repo}")
+            except Exception as e:
+                logger.warning(f"Failed to delete code vectors: {e}")
+
+            # Delete cached GPT solutions for this repo
+            try:
+                from app.db.mongo import solutions
+                solutions_res = await solutions.delete_many({"owner": owner, "repo": repo})
+                logger.info(f"Deleted {solutions_res.deleted_count} solutions for {owner}/{repo}")
+            except Exception as e:
+                logger.warning(f"Failed to delete solutions: {e}")
             
             logger.info(f"Deleted repository {owner}/{repo}: {issues_result.deleted_count} issues")
             

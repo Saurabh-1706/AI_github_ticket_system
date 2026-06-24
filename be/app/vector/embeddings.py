@@ -14,12 +14,15 @@ class EmbeddingService:
                 BASE_DIR, "models", "all-MiniLM-L6-v2"
             )
 
-            print("✅ Loading SentenceTransformer from:", MODEL_PATH)
-
-            self.model = SentenceTransformer(
-                MODEL_PATH,
-                local_files_only=True
-            )
+            if os.path.exists(MODEL_PATH):
+                print("[EmbeddingService] Loading SentenceTransformer from local:", MODEL_PATH)
+                self.model = SentenceTransformer(
+                    MODEL_PATH,
+                    local_files_only=True
+                )
+            else:
+                print("[EmbeddingService] Local model not found — downloading from HuggingFace (one-time ~90MB)...")
+                self.model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
         return self.model
 

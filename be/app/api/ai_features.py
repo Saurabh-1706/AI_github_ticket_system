@@ -244,7 +244,7 @@ async def get_similar_issues(owner: str, repo: str, issue_number: int):
             from app.core.embedder import embedder
             from app.core.chroma_manager import chroma_manager
             embedding = embedder.embed_issue(issue.get("title", ""), issue.get("body", "") or "")
-            raw_similar = chroma_manager.find_similar_issues(
+            raw_similar = await chroma_manager.find_similar_issues(
                 repo_name=f"{owner}/{repo}",
                 embedding=embedding,
                 top_k=5,

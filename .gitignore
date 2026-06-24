@@ -54,6 +54,8 @@ build/
 
 # ChromaDB
 be/chroma_db/
+be/chroma/
+be/models/
 chroma/
 chroma_db/
 *.chroma

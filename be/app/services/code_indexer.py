@@ -132,14 +132,6 @@ def _fetch_file(owner: str, repo: str, path: str, token: Optional[str]) -> Optio
         return None
 
 
-# ── Collection name helper ────────────────────────────────────────────────────
-
-def _code_collection_name(owner: str, repo: str) -> str:
-    """ChromaDB collection name for the code index (separate from issues)."""
-    raw = f"code_{owner}_{repo}".lower()
-    return re.sub(r"[^a-z0-9_]", "_", raw)[:60]
-
-
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def index_repository(
@@ -149,26 +141,21 @@ def index_repository(
     force: bool = False,
 ) -> dict:
     """
-    Walk the repo file tree, embed all code chunks, store in ChromaDB.
+    Walk the repo file tree, embed all code chunks, store in MongoDB code_vectors.
     Returns {indexed_files, total_chunks, skipped_files}.
 
-    Safe to run multiple times — chunks are upserted (not duplicated).
-    Pass force=True to re-index even if already indexed.
+    Safe to run multiple times — previous chunks for the repo are cleared first.
     """
     try:
-        import chromadb
-        from chromadb.config import Settings
         from app.vector.embeddings import EmbeddingService
+        from app.db.mongo import code_vectors_sync
 
         embedder_svc = EmbeddingService()
-        chroma_client = chromadb.Client(
-            Settings(persist_directory="./chroma", anonymized_telemetry=False)
-        )
-        collection = chroma_client.get_or_create_collection(
-            name=_code_collection_name(owner, repo)
-        )
+        repo_name = f"{owner}/{repo}"
+        # Clear existing index for this repository first
+        code_vectors_sync.delete_many({"repo": repo_name})
     except Exception as e:
-        logger.error(f"Cannot initialise ChromaDB for code indexing: {e}")
+        logger.error(f"Cannot initialise MongoDB for code indexing: {e}")
         return {"indexed_files": 0, "total_chunks": 0, "error": str(e)}
 
     branch = _get_default_branch(owner, repo, token)
@@ -195,16 +182,21 @@ def index_repository(
             ids = [c["chunk_id"] for c in chunks]
             texts = [c["content"] for c in chunks]
             embeddings = [embedder_svc.embed_text(t) for t in texts]
-            metadatas = [
-                {"owner": owner, "repo": repo, "path": c["path"], "chunk_index": c["chunk_index"]}
-                for c in chunks
-            ]
-            collection.upsert(
-                ids=ids,
-                embeddings=embeddings,
-                documents=texts,
-                metadatas=metadatas,
-            )
+            
+            docs = []
+            for chunk_id, text, emb, c in zip(ids, texts, embeddings, chunks):
+                docs.append({
+                    "repo": repo_name,
+                    "chunk_id": chunk_id,
+                    "path": c["path"],
+                    "content": text,
+                    "chunk_index": c["chunk_index"],
+                    "embedding": emb,
+                })
+            
+            if docs:
+                code_vectors_sync.insert_many(docs)
+                
             indexed_files += 1
             total_chunks += len(chunks)
         except Exception as e:
@@ -225,47 +217,53 @@ def search_code(
     top_k: int = 3,
 ) -> list[dict]:
     """
-    Semantic vector search over the indexed code chunks.
+    Semantic vector search over the indexed code chunks in MongoDB Atlas.
     Returns list of {path, snippet, score} sorted by relevance.
-    Falls back to empty list if the index doesn't exist.
     """
     try:
-        import chromadb
-        from chromadb.config import Settings
         from app.vector.embeddings import EmbeddingService
+        from app.db.mongo import code_vectors_sync
 
         embedder_svc = EmbeddingService()
-        chroma_client = chromadb.Client(
-            Settings(persist_directory="./chroma", anonymized_telemetry=False)
-        )
-        col_name = _code_collection_name(owner, repo)
-        # Don't create — if it doesn't exist, there's no index yet
-        existing = [c.name for c in chroma_client.list_collections()]
-        if col_name not in existing:
-            logger.info(f"No code index yet for {owner}/{repo} — will use keyword search")
-            return []
+        repo_name = f"{owner}/{repo}"
 
-        collection = chroma_client.get_collection(col_name)
-        if collection.count() == 0:
+        if not is_indexed(owner, repo):
+            logger.info(f"No code index yet for {repo_name} — will use keyword search")
             return []
 
         query_embedding = embedder_svc.embed_text(query_text)
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=min(top_k, collection.count()),
-            include=["documents", "metadatas", "distances"],
-        )
+        
+        pipeline = [
+            {
+                "$vectorSearch": {
+                    "index": "vector_index",
+                    "path": "embedding",
+                    "queryVector": query_embedding,
+                    "numCandidates": top_k * 10,
+                    "limit": top_k,
+                    "filter": {"repo": {"$eq": repo_name}},
+                }
+            },
+            {
+                "$project": {
+                    "path": 1,
+                    "content": 1,
+                    "score": {"$meta": "vectorSearchScore"},
+                    "_id": 0,
+                }
+            },
+        ]
+
+        results = code_vectors_sync.aggregate(pipeline)
 
         chunks = []
-        for i, doc in enumerate(results["documents"][0]):
-            meta = results["metadatas"][0][i]
-            dist = results["distances"][0][i]
-            score = round(1 - dist, 3)
+        for doc in results:
+            score = round(doc.get("score", 0.0), 3)
             if score < 0.3:
                 continue  # Discard low-relevance results
             chunks.append({
-                "path": meta.get("path", ""),
-                "content": doc,
+                "path": doc.get("path", ""),
+                "content": doc.get("content", ""),
                 "score": score,
             })
 
@@ -285,15 +283,8 @@ def search_code(
 def is_indexed(owner: str, repo: str) -> bool:
     """Quick check: has this repo been code-indexed?"""
     try:
-        import chromadb
-        from chromadb.config import Settings
-        client = chromadb.Client(
-            Settings(persist_directory="./chroma", anonymized_telemetry=False)
-        )
-        col_name = _code_collection_name(owner, repo)
-        existing = [c.name for c in client.list_collections()]
-        if col_name not in existing:
-            return False
-        return client.get_collection(col_name).count() > 0
+        from app.db.mongo import code_vectors_sync
+        doc = code_vectors_sync.find_one({"repo": f"{owner}/{repo}"})
+        return doc is not None
     except Exception:
         return False

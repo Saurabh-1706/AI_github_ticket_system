@@ -135,4 +135,4 @@ class ChromaManager:
 
 
 # Singleton instance
-chroma_manager = ChromaManager()
+from app.core.mongo_vector_manager import mongo_vector_manager as chroma_manager

@@ -106,4 +106,5 @@ class ChromaStore:
 
 
 # ✅ SINGLE shared instance (this is what everyone imports)
-chroma = ChromaStore()
+from app.vector.mongo_chroma_client import MongoChromaStore
+chroma = MongoChromaStore()

@@ -43,8 +43,8 @@ def _verify_signature(body: bytes, signature: str) -> bool:
 
 
 
-def _embed_and_store(owner: str, repo: str, issue_data: dict):
-    """Embed a new/updated issue into ChromaDB (synchronous — call from thread)."""
+async def _embed_and_store(owner: str, repo: str, issue_data: dict):
+    """Embed a new/updated issue into MongoDB (async)."""
     try:
         from app.core.embedder import embedder
         from app.core.chroma_manager import chroma_manager
@@ -52,7 +52,7 @@ def _embed_and_store(owner: str, repo: str, issue_data: dict):
             issue_data.get("title", ""),
             issue_data.get("body", "") or "",
         )
-        chroma_manager.add_issue(
+        await chroma_manager.add_issue(
             repo_name=f"{owner}/{repo}",
             issue_number=issue_data["number"],
             title=issue_data.get("title", ""),
@@ -60,9 +60,9 @@ def _embed_and_store(owner: str, repo: str, issue_data: dict):
             embedding=embedding,
             metadata={"state": issue_data.get("state", "open")},
         )
-        logger.info(f"🧠 Embedded issue #{issue_data['number']} into ChromaDB via webhook")
+        logger.info(f"🧠 Embedded issue #{issue_data['number']} into MongoDB via webhook")
     except Exception as e:
-        logger.warning(f"ChromaDB embed failed for webhook issue #{issue_data.get('number')}: {e}")
+        logger.warning(f"MongoDB embed failed for webhook issue #{issue_data.get('number')}: {e}")
 
 
 # ─────────────────────────────────────────
@@ -116,7 +116,7 @@ async def github_webhook(
             # Best-effort ChromaDB cleanup
             try:
                 from app.core.chroma_manager import chroma_manager
-                chroma_manager.delete_issue(
+                await chroma_manager.delete_issue(
                     repo_name=f"{owner}/{repo_name}",
                     issue_number=issue_data.get("number"),
                 )
@@ -155,9 +155,8 @@ async def github_webhook(
             upsert=True
         )
 
-        # Embed into ChromaDB so similarity search stays current
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, _embed_and_store, owner, repo_name, issue_data)
+        # Embed into MongoDB so similarity search stays current
+        asyncio.create_task(_embed_and_store(owner, repo_name, issue_data))
 
         logger.info(f"✅ Webhook synced issue #{issue_data['number']} ({action})")
         return {"status": "synced", "action": action, "issue": issue_data["number"]}
