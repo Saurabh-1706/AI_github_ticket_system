@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getCurrentUser } from "../../../services/auth";
 import { useAuth } from "../../../components/AuthProvider";
 
-export default function GitHubCallbackPage() {
+function GitHubCallbackPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login } = useAuth();
@@ -140,5 +140,22 @@ export default function GitHubCallbackPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function GitHubCallbackPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-black">
+        <div className="text-center">
+          <div className="flex flex-col items-center gap-4">
+            <div className="h-12 w-12 animate-spin rounded-full border-4 border-zinc-200 border-t-black dark:border-zinc-800 dark:border-t-white" />
+            <p className="text-zinc-600 dark:text-zinc-400">Processing GitHub authentication...</p>
+          </div>
+        </div>
+      </div>
+    }>
+      <GitHubCallbackPageContent />
+    </Suspense>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, Suspense } from "react";
 import { fetchRepo, checkRepoAccess, getUserToken, fetchCachedIssues, syncRepository, streamIssues, type CacheIssuesParams } from "../services/github";
 import RepoCard from "../components/RepoCard";
 import IssueList from "../components/IssueList";
@@ -18,7 +18,7 @@ import SearchModal from "../components/SearchModal";
 import ReleaseNotesModal from "../components/ReleaseNotesModal";
 import RiskReportModal from "../components/RiskReportModal";
 
-export default function RepositoryPage() {
+function RepositoryPageContent() {
   const params = useSearchParams();
   const owner = params.get("owner");
   const repo = params.get("repo");
@@ -468,6 +468,18 @@ export default function RepositoryPage() {
       </main>
 
     </div>
+  );
+}
+
+export default function RepositoryPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-black">
+        <LoadingSpinner />
+      </div>
+    }>
+      <RepositoryPageContent />
+    </Suspense>
   );
 }
 

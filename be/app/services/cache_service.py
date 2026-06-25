@@ -78,13 +78,15 @@ class CacheService:
             if filters.get("min_similarity") is not None:
                 query["duplicate_info.similarity"] = {"$gte": filters["min_similarity"] / 100}
         
-        # Count total
-        total = await cached_issues.count_documents(query)
-        
-        # Get paginated issues
+        # Fetch counts and paginated issues in parallel to minimize latency
         skip = (page - 1) * per_page
         cursor = cached_issues.find(query).sort("number", -1).skip(skip).limit(per_page)
-        issues = await cursor.to_list(length=per_page)
+        
+        total, issues, total_cached = await asyncio.gather(
+            cached_issues.count_documents(query),
+            cursor.to_list(length=per_page),
+            cached_issues.count_documents({"repository_id": repo_doc["_id"]})
+        )
         
         # Convert ObjectId to string
         for issue in issues:
@@ -101,7 +103,7 @@ class CacheService:
             },
             "cache_info": {
                 "last_synced": repo_doc.get("last_synced"),
-                "total_cached": await cached_issues.count_documents({"repository_id": repo_doc["_id"]}),
+                "total_cached": total_cached,
                 "is_fresh": self._is_cache_fresh(repo_doc.get("last_synced"))
             }
         }
@@ -437,13 +439,15 @@ class CacheService:
             }
             repos = await cached_repositories.find(query).sort("last_synced", -1).to_list(length=None)
             
+            # Run all counts in parallel to solve the N+1 query problem
+            count_tasks = [
+                cached_issues.count_documents({"repository_id": repo["_id"]})
+                for repo in repos
+            ]
+            counts = await asyncio.gather(*count_tasks)
+            
             result = []
-            for repo in repos:
-                # Count issues for this repo
-                issue_count = await cached_issues.count_documents({
-                    "repository_id": repo["_id"]
-                })
-                
+            for repo, issue_count in zip(repos, counts):
                 result.append({
                     "owner": repo.get("owner"),
                     "name": repo.get("name"),

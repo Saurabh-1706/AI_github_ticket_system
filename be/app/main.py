@@ -94,3 +94,10 @@ def health_check():
             "database": db_status,
         },
     }
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Run tasks on FastAPI application startup."""
+    from app.db.mongo import init_indexes
+    await init_indexes()

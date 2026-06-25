@@ -36,3 +36,33 @@ def get_database():
     """Get the MongoDB database instance."""
     return db
 
+
+async def init_indexes():
+    """Create MongoDB indexes for caching collections to improve query performance."""
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        logger.info("Initializing MongoDB indexes...")
+        
+        # Index on cached_repositories: owner + name (compound index for lookups)
+        await cached_repositories.create_index([("owner", 1), ("name", 1)])
+        # Index on cached_repositories: user_ids array (for user scoping)
+        await cached_repositories.create_index("user_ids")
+        # Index on cached_repositories: synced_by_user_id (for legacy scoping)
+        await cached_repositories.create_index("synced_by_user_id")
+
+        # Index on cached_issues: repository_id (crucial for joining and grouping issues)
+        await cached_issues.create_index("repository_id")
+        # Compound index on cached_issues: repository_id + number
+        await cached_issues.create_index([("repository_id", 1), ("number", -1)])
+        
+        # Performance indexes for filters on issues
+        await cached_issues.create_index("state")
+        await cached_issues.create_index("category")
+        await cached_issues.create_index("ai_analysis.criticality")
+        await cached_issues.create_index("duplicate_info.classification")
+        
+        logger.info("✅ MongoDB indexes initialized successfully.")
+    except Exception as e:
+        logger.error(f"Failed to initialize MongoDB indexes: {e}", exc_info=True)
+
