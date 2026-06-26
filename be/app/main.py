@@ -34,7 +34,7 @@ app = FastAPI(
 # CORS
 # allow_origins="*" cannot be combined with allow_credentials=True (browser rejects it).
 # Use an explicit list from the environment variable ALLOWED_ORIGINS.
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3001")
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001,http://localhost:5173")
 ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
 app.add_middleware(
