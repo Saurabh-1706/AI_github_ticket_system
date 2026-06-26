@@ -2,6 +2,16 @@
 
 > Analyze, prioritize, and resolve GitHub issues faster using AI.
 
+[**⚡ Visit Live App**](https://git-intellisolve.vercel.app)
+
+---
+
+## Screenshots
+
+| Card & Table View | Analytics Dashboard |
+|---|---|
+| ![Card View](https://placehold.co/600x400/png?text=Card+and+Table+View+Screenshot) | ![Analytics Dashboard](https://placehold.co/600x400/png?text=Analytics+Dashboard+Screenshot) |
+
 ---
 
 ## Features
