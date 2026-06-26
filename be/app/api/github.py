@@ -10,7 +10,6 @@ import traceback
 from datetime import datetime
 
 import httpx
-import numpy as np
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel

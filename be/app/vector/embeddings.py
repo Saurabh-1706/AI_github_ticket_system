@@ -1,35 +1,35 @@
 import os
-from sentence_transformers import SentenceTransformer
+import logging
+from openai import OpenAI
+
+logger = logging.getLogger(__name__)
 
 class EmbeddingService:
     def __init__(self):
-        self.model = None
+        self._client = None
 
-    def _load_model(self):
-        if self.model is None:
-            BASE_DIR = os.path.dirname(
-                os.path.dirname(os.path.dirname(__file__))
+    @property
+    def client(self):
+        if self._client is None:
+            api_key = os.getenv("OPENAI_API_KEY")
+            self._client = OpenAI(api_key=api_key)
+        return self._client
+
+    def _get_embedding(self, text: str) -> list[float]:
+        try:
+            response = self.client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text,
+                dimensions=384
             )
-            MODEL_PATH = os.path.join(
-                BASE_DIR, "models", "all-MiniLM-L6-v2"
-            )
-
-            if os.path.exists(MODEL_PATH):
-                print("[EmbeddingService] Loading SentenceTransformer from local:", MODEL_PATH)
-                self.model = SentenceTransformer(
-                    MODEL_PATH,
-                    local_files_only=True
-                )
-            else:
-                print("[EmbeddingService] Local model not found — downloading from HuggingFace (one-time ~90MB)...")
-                self.model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
-        return self.model
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(f"Error generating embedding via OpenAI: {e}")
+            raise e
 
     def embed_issue(self, title: str, body: str):
-        text = f"{title}\n{body}"
-        model = self._load_model()
-        return model.encode(text).tolist()
+        text = f"{title}\n{(body or '')}"
+        return self._get_embedding(text)
     
     def embed_issue_with_category(self, title: str, body: str, category: str):
         """
@@ -43,12 +43,9 @@ class EmbeddingService:
         Returns:
             Embedding vector as list
         """
-        # Prepend category to improve categorization-aware similarity
         prefix = f"[{category.upper()}]"
-        text = f"{prefix} {title}\n{body}"
-        model = self._load_model()
-        return model.encode(text).tolist()
+        text = f"{prefix} {title}\n{(body or '')}"
+        return self._get_embedding(text)
 
     def embed_text(self, text: str):
-        model = self._load_model()
-        return model.encode(text).tolist()
+        return self._get_embedding(text)

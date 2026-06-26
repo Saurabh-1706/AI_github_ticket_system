@@ -101,7 +101,7 @@ async def _fetch_similar_issues_with_solutions(
     """
     similar: list[dict] = []
     try:
-        import numpy as np
+        import math
         from app.vector.embeddings import EmbeddingService
         from app.vector.chroma_client import chroma
 
@@ -115,16 +115,25 @@ async def _fetch_similar_issues_with_solutions(
         metadatas: list[dict] = results.get("metadatas", [[]])[0]
         embeddings_list = results.get("embeddings", [[]])[0]
 
-        query_vec = np.array(embedding)
-        query_norm = np.linalg.norm(query_vec)
+        def magnitude(v):
+            return math.sqrt(sum(x * x for x in v))
+
+        def dot_product(v1, v2):
+            return sum(x * y for x, y in zip(v1, v2))
+
+        query_norm = magnitude(embedding)
 
         for i, (issue_id, meta) in enumerate(zip(ids, metadatas)):
             if issue_id == exclude_issue_id:
                 continue  # skip self
 
-            # Cosine similarity
-            sim_vec = np.array(embeddings_list[i])
-            cos_sim = float(np.dot(query_vec, sim_vec) / (query_norm * np.linalg.norm(sim_vec) + 1e-9))
+            # Cosine similarity in pure Python
+            sim_vec = embeddings_list[i]
+            sim_norm = magnitude(sim_vec)
+            if query_norm > 0 and sim_norm > 0:
+                cos_sim = dot_product(embedding, sim_vec) / (query_norm * sim_norm + 1e-9)
+            else:
+                cos_sim = 0.0
 
             if cos_sim < 0.55:  # discard low-relevance results
                 continue

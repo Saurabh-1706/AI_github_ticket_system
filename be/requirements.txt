@@ -2,8 +2,6 @@ fastapi
 uvicorn
 httpx
 python-dotenv
-sentence-transformers==2.2.2
-numpy
 pymongo
 motor
 pydantic
