@@ -45,24 +45,28 @@ export default function LoginPage() {
   };
 
   const handleGoogleLogin = async () => {
+    setError("");
     try {
       const { auth_url, state } = await initiateGoogleOAuth();
       // Store state for verification
       sessionStorage.setItem("oauth_state", state);
       window.location.href = auth_url;
     } catch (err) {
-      setError("Failed to initiate Google login");
+      console.error("Google login initiation failed:", err);
+      setError("Failed to initiate Google login: " + (err instanceof Error ? err.message : String(err)));
     }
   };
 
   const handleGitHubLogin = async () => {
+    setError("");
     try {
       const { auth_url, state } = await initiateGitHubOAuth();
       // Store state for verification
       sessionStorage.setItem("oauth_state", state);
       window.location.href = auth_url;
     } catch (err) {
-      setError("Failed to initiate GitHub login");
+      console.error("GitHub login initiation failed:", err);
+      setError("Failed to initiate GitHub login: " + (err instanceof Error ? err.message : String(err)));
     }
   };
 

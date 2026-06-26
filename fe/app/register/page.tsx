@@ -57,22 +57,26 @@ export default function RegisterPage() {
   };
 
   const handleGoogleSignup = async () => {
+    setError("");
     try {
       const { auth_url, state } = await initiateGoogleOAuth();
       sessionStorage.setItem("oauth_state", state);
       window.location.href = auth_url;
     } catch (err) {
-      setError("Failed to initiate Google signup");
+      console.error("Google signup initiation failed:", err);
+      setError("Failed to initiate Google signup: " + (err instanceof Error ? err.message : String(err)));
     }
   };
 
   const handleGitHubSignup = async () => {
+    setError("");
     try {
       const { auth_url, state } = await initiateGitHubOAuth();
       sessionStorage.setItem("oauth_state", state);
       window.location.href = auth_url;
     } catch (err) {
-      setError("Failed to initiate GitHub signup");
+      console.error("GitHub signup initiation failed:", err);
+      setError("Failed to initiate GitHub signup: " + (err instanceof Error ? err.message : String(err)));
     }
   };
 
