@@ -8,9 +8,14 @@
 
 ## Screenshots
 
-| Card & Table View | Analytics Dashboard |
-|---|---|
-| ![Card View](https://placehold.co/600x400/png?text=Card+and+Table+View+Screenshot) | ![Analytics Dashboard](https://placehold.co/600x400/png?text=Analytics+Dashboard+Screenshot) |
+### 🖥️ Dashboard Home
+![Dashboard Home](assets/dashboard.png)
+
+### 📊 Repository Intelligence & Analytics
+![Analytics](assets/analytics.png)
+
+### 🤖 AI Issue Detail & Suggested Code Fixes
+![AI Issue Detail & Code Fixes](assets/issues.png)
 
 ---
 
