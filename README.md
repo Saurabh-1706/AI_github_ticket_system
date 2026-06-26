@@ -34,10 +34,10 @@
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 15, TypeScript, Tailwind CSS |
+| Frontend | Next.js 16, TypeScript, Tailwind CSS |
 | Backend | FastAPI (Python), Uvicorn |
 | Database | MongoDB Atlas & Atlas Vector Search |
-| AI | OpenAI GPT-4o-mini & SentenceTransformers (`all-MiniLM-L6-v2`) |
+| AI | OpenAI GPT-4o-mini & OpenAI Embeddings (`text-embedding-3-small` at 384 dimensions) |
 | Auth | JWT + GitHub OAuth + Google OAuth |
 
 ---
@@ -62,6 +62,9 @@ GITHUB_CLIENT_SECRET=...
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 JWT_SECRET_KEY=your-secret-key
+ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+FRONTEND_URL=http://localhost:3000
+GOOGLE_REDIRECT_URI=http://localhost:8000/api/auth/google/callback
 ```
 
 ---
@@ -142,6 +145,29 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000)
+
+---
+
+## Vercel Deployment Setup
+
+If deploying the Frontend and Backend as separate Vercel projects (e.g. `https://git-intellisolve.vercel.app` and `https://git-intellisolve-be.vercel.app`), configure the following environment variables:
+
+### 1. Backend Environment Variables (on `git-intellisolve-be`)
+- `MONGO_URI` — Connection string to MongoDB Atlas.
+- `OPENAI_API_KEY` — API Key for completions and embeddings.
+- `ALLOWED_ORIGINS` — Comma-separated list of allowed origins, e.g., `https://git-intellisolve.vercel.app,http://localhost:3000` (must include your deployed frontend URL).
+- `FRONTEND_URL` — Base URL of your frontend redirect destination, e.g., `https://git-intellisolve.vercel.app`.
+- `GOOGLE_REDIRECT_URI` — Deployed callback URI, e.g., `https://git-intellisolve-be.vercel.app/api/auth/google/callback`.
+- `GOOGLE_CLIENT_ID` & `GOOGLE_CLIENT_SECRET` — Google OAuth credentials.
+- `GITHUB_CLIENT_ID` & `GITHUB_CLIENT_SECRET` — GitHub OAuth credentials.
+
+### 2. Frontend Environment Variables (on `git-intellisolve`)
+- `NEXT_PUBLIC_API_URL` — Deployed backend URL, e.g., `https://git-intellisolve-be.vercel.app` (without trailing slash).
+
+### 3. Google Developer Console Configuration
+For your OAuth Client ID under **APIs & Services -> Credentials**:
+- **Authorized JavaScript origins**: Add `http://localhost:3000` and `https://git-intellisolve.vercel.app`.
+- **Authorized redirect URIs**: Add `http://localhost:8000/api/auth/google/callback` and `https://git-intellisolve-be.vercel.app/api/auth/google/callback`.
 
 ---
 
